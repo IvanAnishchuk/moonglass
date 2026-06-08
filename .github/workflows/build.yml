@@ -1,0 +1,148 @@
+name: CI
+
+on:
+  schedule:
+    - cron: "0 6 * * 0"
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy --component rustfmt
+          rustup default stable
+
+      - name: Compute cache key
+        id: cache-key
+        run: echo "rustc=$(rustc --version | tr ' /' '__')" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo
+            target
+          key: ${{ runner.os }}-cargo-${{ steps.cache-key.outputs.rustc }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ steps.cache-key.outputs.rustc }}-
+            ${{ runner.os }}-cargo-
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Build
+        run: cargo build --verbose --release --locked
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked --verbose -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --locked --verbose
+
+      - name: Build with minimal preset
+        run: |
+          cargo build --locked --verbose -p moonglass --no-default-features --features minimal
+          cargo build --locked --verbose -p reftests --no-default-features --features minimal
+
+  doc:
+    runs-on: ubuntu-latest
+
+    env:
+      RUSTDOCFLAGS: -D warnings
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Compute cache key
+        id: cache-key
+        run: echo "rustc=$(rustc --version | tr ' /' '__')" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo
+            target
+          key: ${{ runner.os }}-cargo-doc-${{ steps.cache-key.outputs.rustc }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-doc-${{ steps.cache-key.outputs.rustc }}-
+            ${{ runner.os }}-cargo-doc-
+            ${{ runner.os }}-cargo-
+
+      - name: Build docs
+        run: cargo doc --workspace --no-deps --locked
+
+  # Reftests run the consensus-specs minimal preset (covers the 8.8k minimal
+  # cases plus shared cases; skips ~20 mainnet-only edge cases for speed).
+  # Vectors download once and cache; weekly cron keeps the cache warm.
+  reftests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Compute cache key
+        id: cache-key
+        run: echo "rustc=$(rustc --version | tr ' /' '__')" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo
+            target
+          key: ${{ runner.os }}-cargo-reftests-${{ steps.cache-key.outputs.rustc }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-reftests-${{ steps.cache-key.outputs.rustc }}-
+            ${{ runner.os }}-cargo-reftests-
+            ${{ runner.os }}-cargo-
+
+      - uses: actions/cache@v4
+        with:
+          path: reftests/vectors
+          key: ${{ runner.os }}-reftest-vectors-${{ hashFiles('reftests/src/main.rs', 'reftests/src/archive.rs', 'reftests/src/fetch.rs') }}
+          restore-keys: |
+            ${{ runner.os }}-reftest-vectors-
+
+      - name: Build reftests runner
+        run: cargo build --release --locked -p reftests --no-default-features --features minimal
+
+      - name: Run reftests
+        shell: bash
+        run: |
+          set -o pipefail
+          target/release/reftests 2>&1 | tee reftests-summary.txt
+
+      - name: Upload reftests summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reftests-summary
+          path: reftests-summary.txt

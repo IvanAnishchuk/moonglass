@@ -1,0 +1,29 @@
+[package]
+name = "reftests"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "reftests"
+path = "src/main.rs"
+
+[features]
+default = ["mainnet"]
+mainnet = ["moonglass/mainnet"]
+minimal = ["moonglass/minimal"]
+
+[dependencies]
+moonglass = { path = "../moonglass", default-features = false }
+ssz_rs = "0.9"
+snap = "1"
+flate2 = "1"
+tar = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1"
+ureq = { version = "2", features = ["json"] }
+anyhow = "1"
+sha2 = "0.10"
+
+[lints]
+workspace = true

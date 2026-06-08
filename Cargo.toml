@@ -1,0 +1,11 @@
+[workspace]
+members = ["moonglass", "reftests"]
+resolver = "2"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+missing_errors_doc = "allow"
