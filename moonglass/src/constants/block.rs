@@ -68,6 +68,12 @@ pub const MAX_WITHDRAWAL_REQUESTS_PER_PAYLOAD: usize = 16;
 /// Maximum consolidation requests per execution payload.
 pub const MAX_CONSOLIDATION_REQUESTS_PER_PAYLOAD: usize = 2;
 
+/// Maximum builder deposit requests per execution payload.
+pub const MAX_BUILDER_DEPOSIT_REQUESTS_PER_PAYLOAD: usize = 256;
+
+/// Maximum builder exit requests per execution payload.
+pub const MAX_BUILDER_EXIT_REQUESTS_PER_PAYLOAD: usize = 16;
+
 /// Maximum size, in bytes, of an opaque transaction blob.
 pub const MAX_BYTES_PER_TRANSACTION: usize = 1_073_741_824;
 

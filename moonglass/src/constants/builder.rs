@@ -32,6 +32,10 @@ pub const BUILDER_INDEX_FLAG: u64 = 1 << 40;
 /// Sentinel [`BuilderIndex`] for proposer self-builds.
 pub const BUILDER_INDEX_SELF_BUILD: BuilderIndex = BuilderIndex(u64::MAX);
 
+/// Builder version marking an execution payload builder, the only version that
+/// may win a bid.
+pub const PAYLOAD_BUILDER_VERSION: u8 = 0;
+
 /// Numerator of the builder payment quorum (`6/10` of per-slot balance).
 pub const BUILDER_PAYMENT_THRESHOLD_NUMERATOR: u64 = 6;
 

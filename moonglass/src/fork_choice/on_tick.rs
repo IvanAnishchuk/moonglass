@@ -1,57 +1,66 @@
-//! Store-clock advancement and slot-boundary fork-choice side effects.
+//! Advancing the clock.
 //!
-//! `Store::time` is local node time, not consensus state. Advancing it changes
-//! how fork choice admits messages and when unrealized checkpoints become
-//! realized. Slot crossings clear proposer boost. Epoch crossings realize the
-//! checkpoints that block processing pulled forward.
+//! Fork choice runs on the store's own clock, and moving it forward has side
+//! effects. The store's time is local, not chain state, but it controls which
+//! messages are admitted and when pending
+//! [justification](crate::glossary#justification-and-finalization) becomes
+//! official. Crossing into a new [slot](crate::glossary#slot) clears the proposer
+//! boost. Crossing into a new [epoch](crate::glossary#epoch) promotes the
+//! [checkpoints](crate::glossary#checkpoint) that block processing had lined up.
 
-use crate::constants::SLOT_DURATION_MS;
 use crate::error::ForkChoiceError;
 use crate::primitives::Root;
 
-use super::checkpoints::update_checkpoints;
-use super::helpers::{compute_slots_since_epoch_start, get_current_slot, get_slots_since_genesis};
+use super::helpers::compute_slots_since_epoch_start;
 use super::store::Store;
 
-/// Advance the store's clock to `time`, replaying one synthetic tick per
-/// crossed slot boundary so checkpoint updates and proposer-boost resets fire
-/// at the correct slot.
-/// Spec: `on_tick`.
-pub fn on_tick(store: &mut Store, time: u64) -> Result<(), ForkChoiceError> {
-    if time < store.time {
-        return Err(ForkChoiceError::TickWentBackwards {
-            from: store.time,
-            to: time,
-        });
-    }
-    let tick_slot = (time - store.genesis_time) * 1_000 / SLOT_DURATION_MS;
-    while get_slots_since_genesis(store) < tick_slot {
-        let next_slot = get_current_slot(store).as_u64() + 1;
-        let previous_time = store.genesis_time + next_slot * SLOT_DURATION_MS / 1_000;
-        on_tick_per_slot(store, previous_time);
-    }
-    on_tick_per_slot(store, time);
-    Ok(())
-}
-
-/// Apply one store-clock update and run slot-boundary side effects.
-///
-/// Crossing a slot clears proposer boost. Crossing an epoch boundary realizes
-/// the unrealized checkpoints that block processing had pulled forward.
-fn on_tick_per_slot(store: &mut Store, time: u64) {
-    let previous_slot = get_current_slot(store);
-    store.time = time;
-    let current = get_current_slot(store);
-
-    if current > previous_slot {
-        store.proposer_boost_root = Root::default();
+impl Store {
+    /// Move the store's clock forward to `time`.
+    ///
+    /// So that no slot's side effects are skipped when time jumps ahead, this
+    /// steps through each slot boundary in between, applying the per-slot effects
+    /// at each, before finally settling on `time`. Moving backwards is rejected
+    /// with [`ForkChoiceError::TickWentBackwards`].
+    pub fn on_tick(&mut self, time: u64) -> Result<(), ForkChoiceError> {
+        if time < self.time {
+            return Err(ForkChoiceError::TickWentBackwards {
+                from: self.time,
+                to: time,
+            });
+        }
+        let tick_slot = self.slot_at_time(time);
+        while self.get_slots_since_genesis() < tick_slot {
+            // `previous_time` is the start time of the next slot boundary stepped
+            // through on the way to `time`.
+            let next_slot = self.get_current_slot().saturating_add(1).as_u64();
+            let previous_time = self.slot_start_time(next_slot);
+            self.on_tick_per_slot(previous_time);
+        }
+        self.on_tick_per_slot(time);
+        Ok(())
     }
 
-    if current > previous_slot && compute_slots_since_epoch_start(current) == 0 {
-        update_checkpoints(
-            store,
-            store.unrealized_justified_checkpoint,
-            store.unrealized_finalized_checkpoint,
-        );
+    /// Apply one clock step and the boundary effects it triggers.
+    ///
+    /// Sets the time, then checks two boundaries. If a new slot began, it clears
+    /// the proposer boost, since a fresh slot starts with no boosted block. If
+    /// that new slot also begins an epoch, it promotes the unrealized justified
+    /// and finalized checkpoints to confirmed.
+    pub fn on_tick_per_slot(&mut self, time: u64) {
+        let previous_slot = self.get_current_slot();
+        self.time = time;
+        let current = self.get_current_slot();
+        let advanced_slot = current > previous_slot;
+
+        if advanced_slot {
+            self.proposer_boost_root = Root::ZERO;
+        }
+
+        if advanced_slot && compute_slots_since_epoch_start(current) == 0 {
+            self.update_checkpoints(
+                self.unrealized_justified_checkpoint,
+                self.unrealized_finalized_checkpoint,
+            );
+        }
     }
 }

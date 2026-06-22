@@ -66,6 +66,9 @@ pub struct BuilderPendingPayment {
     pub weight: Gwei,
     /// The payment obligation queued by parent-payload handoff or quorum release.
     pub withdrawal: BuilderPendingWithdrawal,
+    /// Proposer that opened this payment, so proposer slashing only clears the
+    /// payment when it slashes that same proposer.
+    pub proposer_index: ValidatorIndex,
 }
 
 /// The vote a payload-timeliness committee member signs for a slot.
@@ -81,7 +84,7 @@ pub struct PayloadAttestationData {
     pub beacon_block_root: Root,
     /// Slot the attestation is for.
     pub slot: Slot,
-    /// True if the payload was observed to be available.
+    /// True if the payload was seen on time, before its due time in the slot.
     pub payload_present: bool,
     /// True if blob data was observed alongside the payload.
     pub blob_data_available: bool,
@@ -94,7 +97,7 @@ pub struct PayloadAttestationData {
 /// [`BeaconState::process_payload_attestation`](crate::containers::BeaconState::process_payload_attestation)
 /// validates this aggregate form. The current fork-choice replay path expands
 /// those bits to validator indices and then reuses
-/// [`crate::fork_choice::on_payload_attestation_message`], whose local store
+/// [`crate::fork_choice::Store::on_payload_attestation_message()`], whose local store
 /// write expands each validator back to every PTC position it occupies. Contrast
 /// [`PayloadAttestationMessage`], which names a single validator index directly.
 #[derive(Default, Debug, Clone, PartialEq, Eq, SimpleSerialize)]
@@ -109,7 +112,7 @@ pub struct PayloadAttestation {
 
 /// Single-member payload-timeliness vote used on gossip before aggregation.
 ///
-/// Handled by [`crate::fork_choice::on_payload_attestation_message`]. This form
+/// Handled by [`crate::fork_choice::Store::on_payload_attestation_message()`]. This form
 /// names a validator index, and fork choice expands it to every PTC position the
 /// validator occupies before updating payload vote vectors.
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, SimpleSerialize)]

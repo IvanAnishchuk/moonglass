@@ -1,64 +1,69 @@
-//! Local block-arrival timeliness and proposer-boost selection.
+//! Recording how on-time a [block](crate::glossary#beacon-block) was, and
+//! choosing the proposer-boost target.
 //!
-//! Timeliness is not a consensus-state field. It is local fork-choice evidence
-//! derived from when this node saw a block relative to the slot's attestation
-//! and payload-attestation deadlines. Proposer boost then uses that evidence to
-//! pick the first timely block in the same dependent-root window.
+//! When a block arrives, this node notes whether it showed up before the slot's
+//! deadlines. That "timeliness" is local evidence, not part of the chain state.
+//! Proposer boost then uses it: the first on-time block of a
+//! [slot](crate::glossary#slot), as long as it belongs to the same duty window
+//! as the current [head](crate::glossary#head), receives the temporary
+//! boost that makes it harder to re-org away.
 
-use crate::constants::{ATTESTATION_TIMELINESS_INDEX, SLOT_DURATION_MS};
 use crate::error::ForkChoiceError;
 use crate::primitives::Root;
 
-use super::helpers::{
-    get_attestation_due_ms, get_current_slot, get_dependent_root, get_payload_attestation_due_ms,
-    seconds_to_milliseconds,
-};
-use super::store::Store;
+use super::helpers::{get_attestation_due_ms, get_payload_attestation_due_ms};
+use super::store::{BlockTimeliness, Store};
 
-/// Record whether a newly imported block arrived before attestation and PTC
-/// deadlines for its slot.
-/// The two booleans are local fork-choice evidence, stored as
-/// `[attestation_timely, payload_attestation_timely]`.
-pub(crate) fn record_block_timeliness(
-    store: &mut Store,
-    root: Root,
-) -> Result<(), ForkChoiceError> {
-    let block = store
-        .blocks
-        .get(&root)
-        .ok_or(ForkChoiceError::UnknownBlock(root))?;
-    let seconds_since_genesis = store.time.saturating_sub(store.genesis_time);
-    let time_into_slot_ms = seconds_to_milliseconds(seconds_since_genesis) % SLOT_DURATION_MS;
-    let is_current_slot = get_current_slot(store) == block.slot;
-    let attestation_threshold = get_attestation_due_ms();
-    let ptc_threshold = get_payload_attestation_due_ms();
-    let timeliness = [
-        is_current_slot && time_into_slot_ms < attestation_threshold,
-        is_current_slot && time_into_slot_ms < ptc_threshold,
-    ];
-    store.block_timeliness.insert(root, timeliness);
-    Ok(())
-}
-
-/// Set proposer boost to `root` when the block is timely and competes in the
-/// same dependent-root window as the previous head.
-/// The store only accepts the first timely block for a slot as the boost target.
-pub(crate) fn update_proposer_boost_root(
-    store: &mut Store,
-    head: Root,
-    root: Root,
-) -> Result<(), ForkChoiceError> {
-    let is_first_block = store.proposer_boost_root == Root::default();
-    let timeliness = store
-        .block_timeliness
-        .get(&root)
-        .ok_or(ForkChoiceError::UnknownBlock(root))?;
-    let is_timely = timeliness[ATTESTATION_TIMELINESS_INDEX];
-    let dependent_root = get_dependent_root(store, root)?;
-    let head_dependent_root = get_dependent_root(store, head)?;
-    let is_same_dependent_root = dependent_root == head_dependent_root;
-    if is_timely && is_first_block && is_same_dependent_root {
-        store.proposer_boost_root = root;
+impl Store {
+    /// Note whether a freshly imported block beat its slot's deadlines.
+    ///
+    /// Records a [`BlockTimeliness`] for the block: whether it was seen before the
+    /// attestation deadline, and before the later payload-attestation deadline. A
+    /// block from an earlier slot never counts as timely. Proposer boost and the
+    /// re-org guards read these flags later.
+    pub fn record_block_timeliness(&mut self, root: Root) -> Result<(), ForkChoiceError> {
+        let block_slot = self
+            .blocks
+            .get(&root)
+            .ok_or(ForkChoiceError::UnknownBlock(root))?
+            .slot;
+        let time_into_slot = self.time_into_slot_ms();
+        let is_current_slot = self.get_current_slot() == block_slot;
+        let timeliness = BlockTimeliness {
+            attestation_timely: is_current_slot && time_into_slot < get_attestation_due_ms(),
+            payload_attestation_timely: is_current_slot
+                && time_into_slot < get_payload_attestation_due_ms(),
+        };
+        self.block_timeliness.insert(root, timeliness);
+        Ok(())
     }
-    Ok(())
+
+    /// Give proposer boost to `root` if it is the slot's first on-time block on
+    /// our chain.
+    ///
+    /// Proposer boost is the temporary extra weight a timely new block earns. It
+    /// is granted at most once per slot, and only when all three hold: the block
+    /// was on-time, nothing has been boosted yet this slot, and the block shares a
+    /// duty window (the same dependent root) with the current head, so the boost
+    /// cannot be carried onto an unrelated fork. Otherwise the boost target is
+    /// left as is.
+    pub fn update_proposer_boost_root(
+        &mut self,
+        head: Root,
+        root: Root,
+    ) -> Result<(), ForkChoiceError> {
+        let is_first_block = self.proposer_boost_root == Root::ZERO;
+        let is_timely = self
+            .block_timeliness
+            .get(&root)
+            .ok_or(ForkChoiceError::UnknownBlock(root))?
+            .attestation_timely;
+        let dependent_root = self.get_dependent_root(root)?;
+        let head_dependent_root = self.get_dependent_root(head)?;
+        let is_same_dependent_root = dependent_root == head_dependent_root;
+        if is_timely && is_first_block && is_same_dependent_root {
+            self.proposer_boost_root = root;
+        }
+        Ok(())
+    }
 }

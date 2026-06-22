@@ -58,12 +58,12 @@ For any consensus path, ask:
 
 Useful entry points:
 
-- Blocks: `BeaconState::apply_signed_block`, then `fork_choice::on_block`.
+- Blocks: `BeaconState::apply_signed_block`, then `Store::on_block`.
 - Payload commitments: `process_execution_payload_bid`,
-  `fork_choice::on_execution_payload_envelope`, and
+  `Store::on_execution_payload_envelope`, and
   `accept_parent_payload_commitment`.
-- Votes and head choice: `process_attestation`, `fork_choice::on_attestation`,
-  and `fork_choice::get_head`.
+- Votes and head choice: `process_attestation`, `Store::on_attestation`,
+  and `Store::get_head`.
 
 ## Repository Layout
 

@@ -33,10 +33,13 @@ pub(super) enum ForkChoiceHandler {
     ExAnte,
     GetHead,
     GetParentPayloadStatus,
+    GetProposerHead,
     OnAttestation,
     OnBlock,
     OnExecutionPayloadEnvelope,
     OnPayloadAttestationMessage,
+    PayloadDataAvailability,
+    PayloadTimeliness,
     Reorg,
     Withholding,
 }
@@ -46,10 +49,13 @@ impl ForkChoiceHandler {
     const EX_ANTE: &'static str = "ex_ante";
     const GET_HEAD: &'static str = "get_head";
     const GET_PARENT_PAYLOAD_STATUS: &'static str = "get_parent_payload_status";
+    const GET_PROPOSER_HEAD: &'static str = "get_proposer_head";
     const ON_ATTESTATION: &'static str = "on_attestation";
     const ON_BLOCK: &'static str = "on_block";
     const ON_EXECUTION_PAYLOAD_ENVELOPE: &'static str = "on_execution_payload_envelope";
     const ON_PAYLOAD_ATTESTATION_MESSAGE: &'static str = "on_payload_attestation_message";
+    const PAYLOAD_DATA_AVAILABILITY: &'static str = "payload_data_availability";
+    const PAYLOAD_TIMELINESS: &'static str = "payload_timeliness";
     const REORG: &'static str = "reorg";
     const WITHHOLDING: &'static str = "withholding";
 }
@@ -60,10 +66,13 @@ impl SupportedHandler for ForkChoiceHandler {
         Self::ExAnte,
         Self::GetHead,
         Self::GetParentPayloadStatus,
+        Self::GetProposerHead,
         Self::OnAttestation,
         Self::OnBlock,
         Self::OnExecutionPayloadEnvelope,
         Self::OnPayloadAttestationMessage,
+        Self::PayloadDataAvailability,
+        Self::PayloadTimeliness,
         Self::Reorg,
         Self::Withholding,
     ];
@@ -74,10 +83,13 @@ impl SupportedHandler for ForkChoiceHandler {
             Self::ExAnte => Self::EX_ANTE,
             Self::GetHead => Self::GET_HEAD,
             Self::GetParentPayloadStatus => Self::GET_PARENT_PAYLOAD_STATUS,
+            Self::GetProposerHead => Self::GET_PROPOSER_HEAD,
             Self::OnAttestation => Self::ON_ATTESTATION,
             Self::OnBlock => Self::ON_BLOCK,
             Self::OnExecutionPayloadEnvelope => Self::ON_EXECUTION_PAYLOAD_ENVELOPE,
             Self::OnPayloadAttestationMessage => Self::ON_PAYLOAD_ATTESTATION_MESSAGE,
+            Self::PayloadDataAvailability => Self::PAYLOAD_DATA_AVAILABILITY,
+            Self::PayloadTimeliness => Self::PAYLOAD_TIMELINESS,
             Self::Reorg => Self::REORG,
             Self::Withholding => Self::WITHHOLDING,
         }

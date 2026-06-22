@@ -39,3 +39,9 @@ pub const DOMAIN_BEACON_BUILDER: DomainType = DomainType([0x0B, 0x00, 0x00, 0x00
 
 /// Domain for payload-timeliness committee attestations.
 pub const DOMAIN_PTC_ATTESTER: DomainType = DomainType([0x0C, 0x00, 0x00, 0x00]);
+
+/// Domain for builder-deposit signatures.
+///
+/// A dedicated domain keeps validator deposit signatures and builder deposit
+/// signatures from being replayed against the other deposit path.
+pub const DOMAIN_BUILDER_DEPOSIT: DomainType = DomainType([0x0E, 0x00, 0x00, 0x00]);

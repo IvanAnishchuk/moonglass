@@ -38,7 +38,7 @@ use crate::constants::{
     HISTORICAL_ROOTS_LIMIT, JUSTIFICATION_BITS_LENGTH, MAX_WITHDRAWALS_PER_PAYLOAD,
     PENDING_CONSOLIDATIONS_LIMIT, PENDING_DEPOSITS_LIMIT, PENDING_PARTIAL_WITHDRAWALS_LIMIT,
     PROPOSER_LOOKAHEAD_LEN, PTC_SIZE, PTC_WINDOW_LEN, SLOTS_PER_HISTORICAL_ROOT,
-    VALIDATOR_REGISTRY_LIMIT,
+    UNSET_DEPOSIT_REQUESTS_START_INDEX, VALIDATOR_REGISTRY_LIMIT,
 };
 use crate::containers::{
     BeaconBlockHeader, Builder, BuilderPendingPayment, BuilderPendingWithdrawal, Checkpoint,
@@ -230,7 +230,7 @@ impl Default for BeaconState {
             next_withdrawal_index: WithdrawalIndex::default(),
             next_withdrawal_validator_index: ValidatorIndex::default(),
             historical_summaries: List::default(),
-            deposit_requests_start_index: u64::default(),
+            deposit_requests_start_index: UNSET_DEPOSIT_REQUESTS_START_INDEX,
             deposit_balance_to_consume: Gwei::default(),
             exit_balance_to_consume: Gwei::default(),
             earliest_exit_epoch: Epoch::default(),

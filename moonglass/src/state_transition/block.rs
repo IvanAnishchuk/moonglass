@@ -42,7 +42,7 @@ impl BeaconState {
         // Current-slot block identity and body processing.
         self.process_block_header(block)?;
         self.process_withdrawals()?;
-        self.process_execution_payload_bid(block)?;
+        self.process_execution_payload_bid(&block.body.signed_execution_payload_bid)?;
         self.process_randao(&block.body)?;
         self.process_eth1_data(&block.body)?;
         self.process_operations(&block.body)?;

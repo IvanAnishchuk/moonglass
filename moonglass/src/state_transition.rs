@@ -112,9 +112,7 @@ impl BeaconState {
     /// [`crate::fork_choice::Store::payloads`], and the committed requests are
     /// applied later by a child block through
     /// [`BeaconState::accept_parent_payload_commitment`].
-    /// Spec route: `verify_execution_payload_envelope`, called from
-    /// `on_execution_payload_envelope`.
-    pub fn process_execution_payload(
+    pub fn verify_execution_payload_envelope(
         &mut self,
         signed_envelope: &SignedExecutionPayloadEnvelope,
     ) -> Result<(), TransitionError> {

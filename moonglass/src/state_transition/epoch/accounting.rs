@@ -59,7 +59,7 @@ impl BeaconState {
         }
         all_deltas.push(self.inactivity_penalty_deltas()?);
         for deltas in all_deltas {
-            deltas.apply_to(&mut self.balances);
+            deltas.apply_to(&mut self.balances)?;
         }
         Ok(())
     }

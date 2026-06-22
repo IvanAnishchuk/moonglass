@@ -1,8 +1,8 @@
 //! Balance behavior used by rewards and validator exits.
 //!
-//! Covers saturating balance mutation, total active balance, base-reward math,
-//! per-flag reward and penalty distribution, the inactivity-leak penalty, and
-//! the slashing mutation.
+//! Covers balance mutation (overflow-checked increases, saturating decreases),
+//! total active balance, base-reward math, per-flag reward and penalty
+//! distribution, the inactivity-leak penalty, and the slashing mutation.
 
 use crate::constants::{
     BASE_REWARD_FACTOR, EFFECTIVE_BALANCE_INCREMENT, EPOCHS_PER_SLASHINGS_VECTOR, GENESIS_EPOCH,
@@ -33,11 +33,20 @@ impl BalanceDeltas {
         }
     }
 
-    /// Saturating-apply the accumulated rewards then penalties to `balances`.
-    pub(crate) fn apply_to(self, balances: &mut ssz_rs::List<Gwei, VALIDATOR_REGISTRY_LIMIT>) {
+    /// Apply the accumulated rewards, then penalties, to `balances`.
+    ///
+    /// A reward addition that overflows `u64` makes the transition invalid and
+    /// raises [`TransitionError::BalanceOverflow`]. Penalties saturate at zero,
+    /// matching the spec's underflow protection on `decrease_balance`.
+    pub(crate) fn apply_to(
+        self,
+        balances: &mut ssz_rs::List<Gwei, VALIDATOR_REGISTRY_LIMIT>,
+    ) -> Result<(), TransitionError> {
         for (i, reward) in self.rewards.iter().enumerate() {
             if i < balances.len() {
-                balances[i] = balances[i].saturating_add(*reward);
+                balances[i] = balances[i]
+                    .checked_add(*reward)
+                    .ok_or(TransitionError::BalanceOverflow)?;
             }
         }
         for (i, penalty) in self.penalties.iter().enumerate() {
@@ -45,18 +54,22 @@ impl BalanceDeltas {
                 balances[i] = balances[i].saturating_sub(*penalty);
             }
         }
+        Ok(())
     }
 }
 
 impl BeaconState {
-    /// Add `delta` gwei to `index`'s balance. Saturates at `Gwei::MAX`.
+    /// Add `delta` gwei to `index`'s balance. A `u64` overflow is invalid and
+    /// raises [`TransitionError::BalanceOverflow`].
     pub fn increase_balance(
         &mut self,
         index: ValidatorIndex,
         delta: Gwei,
     ) -> Result<(), TransitionError> {
         let slot = self.balance_mut(index)?;
-        *slot = slot.saturating_add(delta);
+        *slot = slot
+            .checked_add(delta)
+            .ok_or(TransitionError::BalanceOverflow)?;
         Ok(())
     }
 

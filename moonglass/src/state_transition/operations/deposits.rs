@@ -4,19 +4,21 @@
 //! [`BeaconState::process_operations`](crate::containers::BeaconState::process_operations).
 //! Deposit data that affects this transition arrives through parent-payload
 //! execution-layer deposit requests. Validator deposits enter `pending_deposits`
-//! and are activated later under epoch churn rules. Builder credentials route to
-//! the builder registry, where an existing builder is topped up immediately or a
-//! new builder is registered after proof-of-possession verification.
+//! and are activated later under epoch churn rules. Builder deposit requests
+//! arrive separately and register a new builder or top up an existing one after a
+//! signature check under the builder-deposit domain.
 
 use sha2::{Digest, Sha256};
 use ssz_rs::prelude::*;
 
 use crate::constants::{
-    BUILDER_WITHDRAWAL_PREFIX, COMPOUNDING_WITHDRAWAL_PREFIX, DEPOSIT_CONTRACT_TREE_DEPTH,
+    COMPOUNDING_WITHDRAWAL_PREFIX, DEPOSIT_CONTRACT_TREE_DEPTH, DOMAIN_BUILDER_DEPOSIT,
     DOMAIN_DEPOSIT, EFFECTIVE_BALANCE_INCREMENT, FAR_FUTURE_EPOCH, GENESIS_FORK_VERSION,
-    GENESIS_SLOT, MAX_EFFECTIVE_BALANCE, MIN_ACTIVATION_BALANCE,
+    GENESIS_SLOT, MAX_EFFECTIVE_BALANCE, MIN_ACTIVATION_BALANCE, MIN_BUILDER_WITHDRAWABILITY_DELAY,
 };
-use crate::containers::{BeaconState, Builder, Deposit, PendingDeposit, Validator};
+use crate::containers::{
+    BeaconState, Builder, BuilderDepositRequest, Deposit, PendingDeposit, Validator,
+};
 use crate::error::{MerkleError, OperationError, SignatureError, TransitionError};
 use crate::primitives::{BLSPubkey, BLSSignature, Bytes32, Gwei, ParticipationFlags, Root};
 use crate::state_transition::{
@@ -103,39 +105,6 @@ impl BeaconState {
         Ok(())
     }
 
-    /// Check whether withdrawal credentials route a deposit to the builder registry.
-    #[must_use]
-    pub fn is_builder_withdrawal_credential(credentials: &[u8; 32]) -> bool {
-        credentials[0] == BUILDER_WITHDRAWAL_PREFIX
-    }
-
-    /// True when a queued pending-deposit entry for `pubkey` carries a valid
-    /// proof-of-possession signature. Used by the deposit routing decision so
-    /// a signature-invalid queue entry doesn't block a fresh builder-credential
-    /// deposit from creating a builder.
-    pub fn is_pending_validator_deposit(
-        &self,
-        pubkey: &BLSPubkey,
-    ) -> Result<bool, TransitionError> {
-        let candidates: Vec<PendingDeposit> = self
-            .pending_deposits
-            .iter()
-            .filter(|d| d.pubkey == *pubkey)
-            .copied()
-            .collect();
-        for deposit in candidates {
-            if self.is_valid_deposit_signature(
-                &deposit.pubkey,
-                deposit.withdrawal_credentials,
-                deposit.amount,
-                &deposit.signature,
-            )? {
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    }
-
     /// Choose the registry index a new builder should occupy.
     ///
     /// Reuses the lowest index of an exited builder whose balance is fully
@@ -180,24 +149,76 @@ impl BeaconState {
         Ok(())
     }
 
-    /// Route a builder deposit. Tops up an existing builder by pubkey, or
-    /// registers a new builder when the signature verifies as proof of
-    /// possession.
-    pub fn apply_deposit_for_builder(
+    /// Apply a builder deposit request delivered by the parent payload.
+    ///
+    /// A deposit for a pubkey not yet in the registry registers a new builder when
+    /// its signature verifies under the builder-deposit domain. A deposit for an
+    /// existing builder tops up its balance, and if that builder had already
+    /// started exiting, pushes its withdrawable epoch back out so the new stake is
+    /// not paid out immediately. Spec: `process_builder_deposit_request`.
+    pub fn process_builder_deposit_request(
         &mut self,
-        pubkey: BLSPubkey,
-        withdrawal_credentials: Bytes32,
-        amount: Gwei,
-        signature: BLSSignature,
+        request: &BuilderDepositRequest,
     ) -> Result<(), TransitionError> {
-        if let Some(idx) = self.builders.iter().position(|b| b.pubkey == pubkey) {
-            self.builders[idx].balance = self.builders[idx].balance.saturating_add(amount);
-            return Ok(());
+        match self
+            .builders
+            .iter()
+            .position(|b| b.pubkey == request.pubkey)
+        {
+            None => {
+                if Self::is_valid_builder_deposit_signature(request)? {
+                    self.add_builder_to_registry(
+                        request.pubkey,
+                        request.withdrawal_credentials,
+                        request.amount,
+                    )?;
+                }
+            }
+            Some(idx) => {
+                let current_epoch = self.slot.epoch();
+                let builder = &mut self.builders[idx];
+                builder.balance = builder
+                    .balance
+                    .checked_add(request.amount)
+                    .ok_or(TransitionError::BalanceOverflow)?;
+                if builder.withdrawable_epoch != FAR_FUTURE_EPOCH {
+                    builder.withdrawable_epoch =
+                        current_epoch.saturating_add(MIN_BUILDER_WITHDRAWABILITY_DELAY);
+                }
+            }
         }
-        if !self.is_valid_deposit_signature(&pubkey, withdrawal_credentials, amount, &signature)? {
-            return Ok(());
+        Ok(())
+    }
+
+    /// Verify a builder deposit's signature under [`DOMAIN_BUILDER_DEPOSIT`].
+    ///
+    /// Mirrors validator deposit verification but with the builder domain, so a
+    /// validator deposit signature cannot be replayed as a builder deposit.
+    /// Spec: `is_valid_builder_deposit_signature`.
+    fn is_valid_builder_deposit_signature(
+        request: &BuilderDepositRequest,
+    ) -> Result<bool, TransitionError> {
+        let domain = compute_domain(
+            DOMAIN_BUILDER_DEPOSIT,
+            GENESIS_FORK_VERSION,
+            Root::default(),
+        )?;
+        let mut msg = DepositMessage {
+            pubkey: request.pubkey,
+            withdrawal_credentials: request.withdrawal_credentials,
+            amount: request.amount,
+        };
+        let signing_root = compute_signing_root(&mut msg, domain, MerkleError::DepositMessage)?;
+        match verify_signature(
+            &request.pubkey,
+            signing_root,
+            &request.signature,
+            SignatureError::Deposit,
+        ) {
+            Ok(()) => Ok(true),
+            Err(TransitionError::Signature(_)) => Ok(false),
+            Err(e) => Err(e),
         }
-        self.add_builder_to_registry(pubkey, withdrawal_credentials, amount)
     }
 
     /// Apply an Eth1-bridge deposit. For a never-seen pubkey, validate the

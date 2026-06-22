@@ -15,8 +15,9 @@
 //! are controlled movements between that accounting and execution-layer ETH.
 
 use crate::constants::{
-    DEPOSIT_PROOF_LEN, MAX_CONSOLIDATION_REQUESTS_PER_PAYLOAD, MAX_DEPOSIT_REQUESTS_PER_PAYLOAD,
-    MAX_WITHDRAWAL_REQUESTS_PER_PAYLOAD,
+    DEPOSIT_PROOF_LEN, MAX_BUILDER_DEPOSIT_REQUESTS_PER_PAYLOAD,
+    MAX_BUILDER_EXIT_REQUESTS_PER_PAYLOAD, MAX_CONSOLIDATION_REQUESTS_PER_PAYLOAD,
+    MAX_DEPOSIT_REQUESTS_PER_PAYLOAD, MAX_WITHDRAWAL_REQUESTS_PER_PAYLOAD,
 };
 use crate::primitives::{
     BLSPubkey, BLSSignature, Bytes32, Epoch, ExecutionAddress, Gwei, ValidatorIndex,
@@ -134,14 +135,41 @@ pub struct ConsolidationRequest {
     pub target_pubkey: BLSPubkey,
 }
 
+/// Execution-layer request to deposit stake for a builder.
+///
+/// A builder deposit either registers a new builder or tops up an existing one.
+/// Registering a new builder checks the signature under a builder-specific
+/// domain, so it cannot be confused with a validator deposit. A top-up to an
+/// existing builder skips the signature check.
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, SimpleSerialize)]
+pub struct BuilderDepositRequest {
+    /// Builder's public key.
+    pub pubkey: BLSPubkey,
+    /// Withdrawal credential the deposit binds the builder to.
+    pub withdrawal_credentials: Bytes32,
+    /// Deposit amount.
+    pub amount: Gwei,
+    /// Signature over the deposit message under the builder-deposit domain.
+    pub signature: BLSSignature,
+}
+
+/// Execution-layer request to exit a builder from the registry.
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, SimpleSerialize)]
+pub struct BuilderExitRequest {
+    /// Execution-layer address authorising the exit (must match the builder's).
+    pub source_address: ExecutionAddress,
+    /// Builder's public key.
+    pub pubkey: BLSPubkey,
+}
+
 /// All execution-to-consensus requests delivered by a payload, grouped by kind.
 ///
 /// The delivered envelope carries these requests with the payload. The child
 /// block carries the same requests in
 /// [`crate::containers::BeaconBlockBody::parent_execution_requests`], where
 /// [`BeaconState::accept_parent_payload_commitment`](crate::containers::BeaconState::accept_parent_payload_commitment) checks their root against
-/// the accepted parent bid before dispatching deposit, withdrawal, and
-/// consolidation handlers.
+/// the accepted parent bid before dispatching deposit, withdrawal, consolidation,
+/// and builder handlers.
 #[derive(Default, Debug, Clone, PartialEq, Eq, SimpleSerialize)]
 pub struct ExecutionRequests {
     /// Execution-layer deposit requests.
@@ -150,12 +178,20 @@ pub struct ExecutionRequests {
     pub withdrawals: List<WithdrawalRequest, MAX_WITHDRAWAL_REQUESTS_PER_PAYLOAD>,
     /// Execution-layer consolidation requests.
     pub consolidations: List<ConsolidationRequest, MAX_CONSOLIDATION_REQUESTS_PER_PAYLOAD>,
+    /// Execution-layer builder deposit requests.
+    pub builder_deposits: List<BuilderDepositRequest, MAX_BUILDER_DEPOSIT_REQUESTS_PER_PAYLOAD>,
+    /// Execution-layer builder exit requests.
+    pub builder_exits: List<BuilderExitRequest, MAX_BUILDER_EXIT_REQUESTS_PER_PAYLOAD>,
 }
 
 impl ExecutionRequests {
     /// True when the payload carried no execution-to-consensus requests.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.deposits.is_empty() && self.withdrawals.is_empty() && self.consolidations.is_empty()
+        self.deposits.is_empty()
+            && self.withdrawals.is_empty()
+            && self.consolidations.is_empty()
+            && self.builder_deposits.is_empty()
+            && self.builder_exits.is_empty()
     }
 }

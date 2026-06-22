@@ -71,16 +71,23 @@ impl BeaconState {
         // arrives within the 2-epoch window. Two windows are tracked: the
         // back half of the buffer holds the current epoch's slots, the front
         // half holds the previous epoch's. Slashings outside that window are
-        // out of luck and the payment stays.
+        // out of luck and the payment stays. Only clear the payment when its
+        // recorded proposer is the slashed proposer, so an unrelated same-slot
+        // equivocation cannot grief an honest proposer's payment.
         let slot = h1.slot;
         let proposal_epoch = slot.epoch();
         let previous_epoch = current_epoch.as_u64().saturating_sub(1);
         let slot_offset = slot % SLOTS_PER_EPOCH;
         if proposal_epoch == current_epoch {
-            self.builder_pending_payments[SLOTS_PER_EPOCH + slot_offset] =
-                BuilderPendingPayment::default();
+            let payment_index = SLOTS_PER_EPOCH + slot_offset;
+            if self.builder_pending_payments[payment_index].proposer_index == h1.proposer_index {
+                self.builder_pending_payments[payment_index] = BuilderPendingPayment::default();
+            }
         } else if proposal_epoch.as_u64() == previous_epoch {
-            self.builder_pending_payments[slot_offset] = BuilderPendingPayment::default();
+            let payment_index = slot_offset;
+            if self.builder_pending_payments[payment_index].proposer_index == h1.proposer_index {
+                self.builder_pending_payments[payment_index] = BuilderPendingPayment::default();
+            }
         }
 
         self.slash_validator(h1.proposer_index, None)?;

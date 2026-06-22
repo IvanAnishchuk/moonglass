@@ -43,6 +43,10 @@ pub const DEPOSIT_CONTRACT_TREE_DEPTH: usize = 32;
 /// Length of a deposit proof: Merkle path plus root chunk.
 pub const DEPOSIT_PROOF_LEN: usize = DEPOSIT_CONTRACT_TREE_DEPTH + 1;
 
+/// Sentinel for `deposit_requests_start_index` meaning no start index has been
+/// assigned yet, because no execution-layer deposit request has been processed.
+pub const UNSET_DEPOSIT_REQUESTS_START_INDEX: u64 = u64::MAX;
+
 /// Chain ID of the network the deposit contract lives on.
 #[cfg(feature = "mainnet")]
 pub const DEPOSIT_CHAIN_ID: u64 = 1;

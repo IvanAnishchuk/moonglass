@@ -1,172 +1,182 @@
-//! Fork-choice handling for beacon attestations.
+//! Taking in a beacon [attestation](crate::glossary#attestation).
 //!
-//! Beacon attestations have two jobs in Ethereum fork choice. They still carry
-//! LMD-GHOST and FFG votes. If the voted block's slot equals
-//! `attestation.data.slot`, `AttestationData::index` must be `0` and the latest
-//! message supports [`PayloadStatus::Pending`](super::store::PayloadStatus::Pending).
-//! If the voted block's slot is earlier than `attestation.data.slot`,
-//! `index == 0` supports the empty branch and `index == 1` supports the full
-//! branch. A full branch is accepted only after the corresponding execution
-//! payload envelope has been recorded in the local store.
+//! An attestation is a [validator's](crate::glossary#validator) vote, and it
+//! carries two things at once: a [head](crate::glossary#head) vote, naming the
+//! [block](crate::glossary#beacon-block) it sees as the tip of the chain, and a
+//! [finality](crate::glossary#justification-and-finalization) vote, naming the
+//! [checkpoint](crate::glossary#checkpoint) it wants to finalize. Fork choice
+//! records it as that validator's latest message. There is also a payload-branch
+//! rule specific to this design: a vote whose `index` is 0 backs the empty branch
+//! and 1 backs the full branch, except that a vote for a block in its own
+//! [slot](crate::glossary#slot) must use 0 and stays
+//! [`Pending`](super::store::PayloadStatus::Pending), and a full-branch vote is
+//! only accepted once that block's payload has actually been recorded.
 
 use crate::containers::Attestation;
 use crate::error::{ForkChoiceError, SignatureError};
 use crate::primitives::ValidatorIndex;
 
-use super::checkpoints::store_target_checkpoint_state;
-use super::helpers::{get_checkpoint_block, get_current_slot, get_current_store_epoch};
-use super::payload_status::has_recorded_payload_envelope;
+use super::helpers::is_at_or_after_next_slot;
 use super::store::{LatestMessage, Store};
 
-/// Reject gossip attestations outside the store clock's current/previous epoch.
-///
-/// This is a local fork-choice timing check. Block-embedded attestations skip it
-/// because their timing is validated through block transition instead of gossip
-/// admission.
-pub(crate) fn validate_target_epoch_against_current_time(
-    store: &Store,
-    attestation: &Attestation,
-) -> Result<(), ForkChoiceError> {
-    let target_epoch = attestation.data.target.epoch.as_u64();
-    let current_epoch = get_current_store_epoch(store).as_u64();
-    let previous_epoch = current_epoch.saturating_sub(1);
-    if target_epoch != current_epoch && target_epoch != previous_epoch {
-        return Err(ForkChoiceError::AttestationFromFutureEpoch);
-    }
-    Ok(())
-}
-
-/// Validate the fork-choice rules for admitting a beacon attestation.
-///
-/// This checks target/slot consistency, target and beacon-block availability,
-/// the LMD target root, the store-clock admission rule
-/// `current_slot >= data.slot + 1`, the payload-branch rule based on the
-/// voted block slot relative to `data.slot`, and the requirement that an older
-/// full-branch vote only appears after the payload envelope was recorded. It
-/// mutates nothing. The only output is whether later code may snapshot the
-/// target state, verify the aggregate signature, and update latest messages.
-pub(crate) fn validate_on_attestation(
-    store: &Store,
-    attestation: &Attestation,
-    is_from_block: bool,
-) -> Result<(), ForkChoiceError> {
-    if !is_from_block {
-        validate_target_epoch_against_current_time(store, attestation)?;
-    }
-
-    if attestation.data.target.epoch != attestation.data.slot.epoch() {
-        return Err(ForkChoiceError::AttestationLmdFfgMismatch);
-    }
-
-    if !store.blocks.contains_key(&attestation.data.target.root) {
-        return Err(ForkChoiceError::UnknownBlock(attestation.data.target.root));
-    }
-    if !store
-        .blocks
-        .contains_key(&attestation.data.beacon_block_root)
-    {
-        return Err(ForkChoiceError::UnknownBlock(
-            attestation.data.beacon_block_root,
-        ));
-    }
-    let block_slot = store
-        .blocks
-        .get(&attestation.data.beacon_block_root)
-        .ok_or(ForkChoiceError::UnknownBlock(
-            attestation.data.beacon_block_root,
-        ))?
-        .slot;
-    if block_slot > attestation.data.slot {
-        return Err(ForkChoiceError::AttestationTooEarly);
-    }
-
-    let index = attestation.data.index.as_u64();
-    if index != 0 && index != 1 {
-        return Err(ForkChoiceError::AttestationIndexInvalid(index));
-    }
-    if block_slot == attestation.data.slot && index != 0 {
-        return Err(ForkChoiceError::AttestationIndexInvalid(index));
-    }
-    if index == 1 && !has_recorded_payload_envelope(store, attestation.data.beacon_block_root) {
-        return Err(ForkChoiceError::AttestationPayloadEnvelopeNotRecorded);
-    }
-
-    let checkpoint_root = get_checkpoint_block(
-        store,
-        attestation.data.beacon_block_root,
-        attestation.data.target.epoch,
-    )?;
-    if attestation.data.target.root != checkpoint_root {
-        return Err(ForkChoiceError::AttestationLmdFfgMismatch);
-    }
-
-    if get_current_slot(store).as_u64() < attestation.data.slot.as_u64() + 1 {
-        return Err(ForkChoiceError::AttestationTooEarly);
-    }
-
-    Ok(())
-}
-
-/// Write newer non-equivocating latest messages into the fork-choice store.
-///
-/// The stored message carries both the beacon block root and the payload
-/// branch vote, so later weight calculation can score `ForkChoiceNode` values
-/// rather than only block roots.
-fn update_latest_messages(
-    store: &mut Store,
-    attesting_indices: &[ValidatorIndex],
-    attestation: &Attestation,
-) {
-    let slot = attestation.data.slot;
-    let root = attestation.data.beacon_block_root;
-    let payload_present = attestation.data.index.as_u64() == 1;
-    for index in attesting_indices {
-        if store.equivocating_indices.contains(index) {
-            continue;
+impl Store {
+    /// Reject a gossip attestation whose target epoch is too old or in the future.
+    ///
+    /// A vote arriving over the network is only considered when it targets the
+    /// current or the previous epoch. Votes bundled inside a block skip this
+    /// check, because the block's own validation already constrains their timing.
+    pub fn validate_target_epoch_against_current_time(
+        &self,
+        attestation: &Attestation,
+    ) -> Result<(), ForkChoiceError> {
+        let target_epoch = attestation.data.target.epoch;
+        let current_epoch = self.get_current_store_epoch();
+        let previous_epoch = current_epoch.saturating_sub(1);
+        if target_epoch != current_epoch && target_epoch != previous_epoch {
+            return Err(ForkChoiceError::AttestationFromFutureEpoch);
         }
-        let should_write = match store.latest_messages.get(index) {
-            Some(existing) => slot.as_u64() > existing.slot.as_u64(),
-            None => true,
+        Ok(())
+    }
+
+    /// Check every rule for admitting an attestation, without changing anything.
+    ///
+    /// This gathers the gatekeeping checks in one place: the target epoch and slot
+    /// agree, both the target and the voted block are known, the vote is not for a
+    /// future slot, the payload-branch `index` is legal for that block, a
+    /// full-branch vote only follows a recorded payload, and the voted block
+    /// really leads to the checkpoint it claims. It reads the store but writes
+    /// nothing. Passing here is what lets [`Self::on_attestation`] go on to record
+    /// the vote.
+    pub fn validate_on_attestation(
+        &self,
+        attestation: &Attestation,
+        is_from_block: bool,
+    ) -> Result<(), ForkChoiceError> {
+        let data = attestation.data;
+        let target = data.target;
+
+        if !is_from_block {
+            self.validate_target_epoch_against_current_time(attestation)?;
+        }
+
+        if target.epoch != data.slot.epoch() {
+            return Err(ForkChoiceError::AttestationLmdFfgMismatch);
+        }
+
+        if !self.blocks.contains_key(&target.root) {
+            return Err(ForkChoiceError::UnknownBlock(target.root));
+        }
+        let block_slot = self
+            .blocks
+            .get(&data.beacon_block_root)
+            .ok_or(ForkChoiceError::UnknownBlock(data.beacon_block_root))?
+            .slot;
+        if block_slot > data.slot {
+            return Err(ForkChoiceError::AttestationTooEarly);
+        }
+
+        let index = data.index.as_u64();
+        if index != 0 && index != 1 {
+            return Err(ForkChoiceError::AttestationIndexInvalid(index));
+        }
+        if block_slot == data.slot && index != 0 {
+            return Err(ForkChoiceError::AttestationIndexInvalid(index));
+        }
+        if index == 1 && !self.is_payload_verified(data.beacon_block_root) {
+            return Err(ForkChoiceError::AttestationPayloadEnvelopeNotRecorded);
+        }
+
+        let checkpoint_root = self.get_checkpoint_block(data.beacon_block_root, target.epoch)?;
+        if target.root != checkpoint_root {
+            return Err(ForkChoiceError::AttestationLmdFfgMismatch);
+        }
+
+        if !is_at_or_after_next_slot(data.slot, self.get_current_slot()) {
+            return Err(ForkChoiceError::AttestationTooEarly);
+        }
+
+        Ok(())
+    }
+
+    /// Record each attester's vote as their newest, unless it is stale.
+    ///
+    /// For every non-equivocating validator in the attestation, this overwrites
+    /// their stored [`LatestMessage`] when this vote is for a newer slot than the
+    /// one already held. The stored message keeps both the block root and the
+    /// payload branch the vote chose, so scoring can later place it on the right
+    /// [`ForkChoiceNode`](super::store::ForkChoiceNode).
+    pub fn update_latest_messages(
+        &mut self,
+        attesting_indices: &[ValidatorIndex],
+        attestation: &Attestation,
+    ) {
+        let slot = attestation.data.slot;
+        let root = attestation.data.beacon_block_root;
+        let payload_present = attestation.data.index.as_u64() == 1;
+        for index in attesting_indices {
+            if self.equivocating_indices.contains(index) {
+                continue;
+            }
+            let should_write = self
+                .latest_messages
+                .get(index)
+                .is_none_or(|existing| slot > existing.slot);
+            if should_write {
+                self.latest_messages.insert(
+                    *index,
+                    LatestMessage {
+                        slot,
+                        root,
+                        payload_present,
+                    },
+                );
+            }
+        }
+    }
+
+    /// Validate an attestation and store it as its voters' latest message.
+    ///
+    /// The full path for one attestation: run every check in
+    /// [`Self::validate_on_attestation`], make sure the target checkpoint's state
+    /// is cached, verify the aggregate signature against it, then record the vote
+    /// with [`Self::update_latest_messages`]. From this point each voter's weight
+    /// counts toward whatever node their vote supports.
+    ///
+    /// Runs on a scratch copy and commits only on success, so a rejected
+    /// attestation leaves the store unchanged.
+    pub fn on_attestation(
+        &mut self,
+        attestation: &Attestation,
+        is_from_block: bool,
+    ) -> Result<(), ForkChoiceError> {
+        let mut scratch = self.clone();
+        scratch.on_attestation_inner(attestation, is_from_block)?;
+        *self = scratch;
+        Ok(())
+    }
+
+    /// Non-transactional body of [`Self::on_attestation`], used by the block-import
+    /// path so it does not clone the store again for every embedded message.
+    pub fn on_attestation_inner(
+        &mut self,
+        attestation: &Attestation,
+        is_from_block: bool,
+    ) -> Result<(), ForkChoiceError> {
+        self.validate_on_attestation(attestation, is_from_block)?;
+        self.store_target_checkpoint_state(attestation.data.target)?;
+        // Validate against the cached target state inside a scoped immutable
+        // borrow, then drop it so the vote can be written without cloning the
+        // state.
+        let indexed = {
+            let target_state = self
+                .checkpoint_states
+                .get(&attestation.data.target)
+                .ok_or(ForkChoiceError::UnknownBlock(attestation.data.target.root))?;
+            let indexed = target_state.indexed_attestation(attestation)?;
+            target_state.validate_indexed_attestation(&indexed, SignatureError::Attestation)?;
+            indexed
         };
-        if should_write {
-            store.latest_messages.insert(
-                *index,
-                LatestMessage {
-                    slot,
-                    root,
-                    payload_present,
-                },
-            );
-        }
+        self.update_latest_messages(&indexed.attesting_indices, attestation);
+        Ok(())
     }
-}
-
-/// Validate `attestation` and record each attester's newest fork-choice vote.
-///
-/// The handler first checks fork-choice timing and payload-branch legality, then
-/// ensures the target checkpoint state is cached, verifies the aggregate
-/// signature against that checkpoint state, and writes
-/// [`Store::latest_messages`](super::store::Store::latest_messages). The stored
-/// message includes `payload_present`. Later weight calculation resolves it to
-/// pending when the voted block is at `data.slot` and to full/empty when the
-/// voted block is older, so scoring can work over
-/// [`ForkChoiceNode`](super::store::ForkChoiceNode) rather than only a block
-/// root.
-/// Spec: `on_attestation`.
-pub fn on_attestation(
-    store: &mut Store,
-    attestation: &Attestation,
-    is_from_block: bool,
-) -> Result<(), ForkChoiceError> {
-    validate_on_attestation(store, attestation, is_from_block)?;
-    store_target_checkpoint_state(store, attestation.data.target)?;
-    let target_state = store
-        .checkpoint_states
-        .get(&attestation.data.target)
-        .ok_or(ForkChoiceError::UnknownBlock(attestation.data.target.root))?
-        .clone();
-    let indexed = target_state.indexed_attestation(attestation)?;
-    target_state.validate_indexed_attestation(&indexed, SignatureError::Attestation)?;
-    update_latest_messages(store, &indexed.attesting_indices, attestation);
-    Ok(())
 }

@@ -39,10 +39,6 @@ pub enum OperationError {
     #[error("validator {0} has a pending withdrawal queue entry")]
     ValidatorHasPendingWithdrawal(ValidatorIndex),
 
-    /// Voluntary exit refused because the builder has a non-zero pending-withdrawal queue entry.
-    #[error("builder {0} has a pending withdrawal queue entry")]
-    BuilderHasPendingWithdrawal(BuilderIndex),
-
     /// A BLS-to-execution change targets a validator that is not BLS-credentialed.
     #[error("validator {0} does not have BLS withdrawal credentials")]
     WithdrawalCredentialsNotBls(ValidatorIndex),
@@ -114,6 +110,9 @@ pub enum OperationError {
     /// Builder is not active at the time of bid acceptance.
     #[error("builder {0} not active")]
     BuilderNotActive(BuilderIndex),
+    /// Builder is not a payload builder (its version is not the payload version).
+    #[error("builder {0} is not a payload builder")]
+    BuilderNotPayloadVersion(BuilderIndex),
     /// Builder cannot cover the bid amount with its current balance.
     #[error("builder {0} balance insufficient to cover bid")]
     BuilderInsufficientBalance(BuilderIndex),

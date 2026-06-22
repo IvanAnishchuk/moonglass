@@ -70,4 +70,9 @@ pub enum TransitionError {
         /// State root computed from the post-state.
         want: Root,
     },
+
+    /// A gwei balance increase overflowed `u64`, which makes the transition
+    /// invalid.
+    #[error("balance arithmetic overflow")]
+    BalanceOverflow,
 }

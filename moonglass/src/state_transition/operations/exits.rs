@@ -1,9 +1,9 @@
 //! Voluntary exits and BLS-to-execution credential changes.
 //!
-//! Voluntary exits schedule a validator or flagged builder index to leave the
-//! active set after the appropriate churn/withdrawability delay. Credential
-//! changes move a validator from BLS withdrawal credentials to an execution
-//! address so later withdrawals can be paid on the execution layer.
+//! Voluntary exits schedule a validator to leave the active set after the
+//! churn/withdrawability delay. Credential changes move a validator from BLS
+//! withdrawal credentials to an execution address so later withdrawals can be
+//! paid on the execution layer.
 
 use sha2::{Digest, Sha256};
 
@@ -20,13 +20,13 @@ use crate::state_transition::{
 };
 
 impl BeaconState {
-    /// Validate a voluntary exit and schedule the validator's (or builder's)
-    /// departure from the active set.
-    /// The operation is routed by index kind: an index with the
-    /// `BUILDER_INDEX_FLAG` bit set targets a builder, everything else targets
-    /// a validator. The two branches share the signed-epoch check and the
-    /// signature-verification shape but use different active-set, eligibility,
-    /// and pending-withdrawal checks.
+    /// Validate a voluntary exit and schedule the validator's departure from the
+    /// active set.
+    /// The exit names a validator by index and is checked for the signed epoch,
+    /// an active not-yet-exiting validator that has been active long enough, no
+    /// queued pending withdrawal, and a valid signature. A builder-flagged index
+    /// is out of range for the validator registry and is rejected, since builders
+    /// leave through their own exit request, not a voluntary exit.
     /// Spec: `process_voluntary_exit`
     pub fn process_voluntary_exit(
         &mut self,
@@ -51,10 +51,6 @@ impl BeaconState {
         )?;
         let mut exit_msg = *exit;
         let signing_root = compute_signing_root(&mut exit_msg, domain, MerkleError::VoluntaryExit)?;
-
-        if exit.validator_index.is_builder_index() {
-            return self.process_builder_voluntary_exit(signed_exit, signing_root);
-        }
 
         let validator = self.validator(exit.validator_index)?;
         let pubkey = validator.pubkey;
@@ -89,35 +85,6 @@ impl BeaconState {
         )?;
 
         self.initiate_validator_exit(exit.validator_index)?;
-        Ok(())
-    }
-
-    /// Validate and apply the builder branch of a voluntary-exit operation.
-    ///
-    /// Builder exits use the same signed root as validator exits but decode the
-    /// flagged index into a builder index and check builder-specific pending
-    /// withdrawal state.
-    fn process_builder_voluntary_exit(
-        &mut self,
-        signed_exit: &SignedVoluntaryExit,
-        signing_root: crate::primitives::Root,
-    ) -> Result<(), TransitionError> {
-        let exit = &signed_exit.message;
-        let builder_index = exit.validator_index.to_builder_index()?;
-        if !self.is_active_builder(builder_index)? {
-            return Err(OperationError::BuilderNotActive(builder_index).into());
-        }
-        if self.pending_balance_to_withdraw_for_builder(builder_index) != Gwei::ZERO {
-            return Err(OperationError::BuilderHasPendingWithdrawal(builder_index).into());
-        }
-        let pubkey = self.builder(builder_index)?.pubkey;
-        verify_signature(
-            &pubkey,
-            signing_root,
-            &signed_exit.signature,
-            SignatureError::VoluntaryExit(exit.validator_index),
-        )?;
-        self.initiate_builder_exit(builder_index)?;
         Ok(())
     }
 

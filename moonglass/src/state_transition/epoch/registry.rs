@@ -130,7 +130,9 @@ impl BeaconState {
             .position(|v| v.pubkey == deposit.pubkey);
         if let Some(idx) = existing {
             if idx < self.balances.len() {
-                self.balances[idx] = self.balances[idx].saturating_add(deposit.amount);
+                self.balances[idx] = self.balances[idx]
+                    .checked_add(deposit.amount)
+                    .ok_or(TransitionError::BalanceOverflow)?;
             }
             return Ok(());
         }
