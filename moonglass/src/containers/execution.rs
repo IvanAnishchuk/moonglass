@@ -31,7 +31,7 @@ pub type Transactions = List<Transaction, MAX_TRANSACTIONS_PER_PAYLOAD>;
 /// Execution-layer block payload delivered for a beacon block.
 ///
 /// Consensus treats transactions and block-access lists as opaque bytes here.
-/// [`BeaconState::process_execution_payload`](crate::containers::BeaconState::process_execution_payload) checks the payload against the
+/// [`BeaconState::verify_execution_payload_envelope`](crate::containers::BeaconState::verify_execution_payload_envelope) checks the payload against the
 /// accepted builder bid and expected consensus-side commitments. Execution
 /// engine validity is outside the current boundary.
 #[derive(Default, Debug, Clone, PartialEq, Eq, SimpleSerialize)]
@@ -130,8 +130,8 @@ pub struct SignedExecutionPayloadBid {
 
 /// Delivered payload plus execution-to-consensus requests and provenance roots.
 ///
-/// Checked by [`BeaconState::process_execution_payload`](crate::containers::BeaconState::process_execution_payload). Fork choice records a
-/// checked envelope through [`crate::fork_choice::on_execution_payload_envelope`]
+/// Checked by [`BeaconState::verify_execution_payload_envelope`](crate::containers::BeaconState::verify_execution_payload_envelope). Fork choice records a
+/// checked envelope through [`crate::fork_choice::Store::on_execution_payload_envelope()`]
 /// in [`crate::fork_choice::Store::payloads`]. That store entry means
 /// "recorded after the current consensus-side envelope checks", not a complete
 /// execution-engine or blob-availability verdict.
@@ -152,7 +152,7 @@ pub struct ExecutionPayloadEnvelope {
 /// Envelope plus the signature from the required envelope signer.
 ///
 /// Network-facing entry object for
-/// [`crate::fork_choice::on_execution_payload_envelope`]. The state transition
+/// [`crate::fork_choice::Store::on_execution_payload_envelope()`]. The state transition
 /// validates the signer and bid commitments, and fork choice records the
 /// envelope only after those checks pass. Non-self-build envelopes are signed by
 /// the registered builder. Self-build envelopes are signed by the beacon

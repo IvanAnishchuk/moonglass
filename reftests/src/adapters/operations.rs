@@ -8,9 +8,10 @@
 use std::marker::PhantomData;
 
 use moonglass::containers::{
-    Attestation, AttesterSlashing, BeaconBlock, BeaconState, ConsolidationRequest, DepositRequest,
-    PayloadAttestation, ProposerSlashing, SignedBLSToExecutionChange, SignedVoluntaryExit,
-    SyncAggregate, WithdrawalRequest,
+    Attestation, AttesterSlashing, BeaconBlock, BeaconState, BuilderDepositRequest,
+    BuilderExitRequest, ConsolidationRequest, DepositRequest, PayloadAttestation, ProposerSlashing,
+    SignedBLSToExecutionChange, SignedExecutionPayloadBid, SignedVoluntaryExit, SyncAggregate,
+    WithdrawalRequest,
 };
 use moonglass::error::TransitionError;
 
@@ -33,6 +34,8 @@ pub(super) enum OperationHandler {
     BlockHeader,
     PayloadAttestation,
     DepositRequest,
+    BuilderDepositRequest,
+    BuilderExitRequest,
     WithdrawalRequest,
     ConsolidationRequest,
     ExecutionPayloadBid,
@@ -45,6 +48,8 @@ impl OperationHandler {
     const ATTESTER_SLASHING: &'static str = "attester_slashing";
     const BLOCK_HEADER: &'static str = "block_header";
     const BLS_TO_EXECUTION_CHANGE: &'static str = "bls_to_execution_change";
+    const BUILDER_DEPOSIT_REQUEST: &'static str = "builder_deposit_request";
+    const BUILDER_EXIT_REQUEST: &'static str = "builder_exit_request";
     const CONSOLIDATION_REQUEST: &'static str = "consolidation_request";
     const DEPOSIT_REQUEST: &'static str = "deposit_request";
     const EXECUTION_PAYLOAD_BID: &'static str = "execution_payload_bid";
@@ -70,6 +75,8 @@ impl SupportedHandler for OperationHandler {
         Self::BlockHeader,
         Self::PayloadAttestation,
         Self::DepositRequest,
+        Self::BuilderDepositRequest,
+        Self::BuilderExitRequest,
         Self::WithdrawalRequest,
         Self::ConsolidationRequest,
         Self::ExecutionPayloadBid,
@@ -89,6 +96,8 @@ impl SupportedHandler for OperationHandler {
             Self::BlockHeader => Self::BLOCK_HEADER,
             Self::PayloadAttestation => Self::PAYLOAD_ATTESTATION,
             Self::DepositRequest => Self::DEPOSIT_REQUEST,
+            Self::BuilderDepositRequest => Self::BUILDER_DEPOSIT_REQUEST,
+            Self::BuilderExitRequest => Self::BUILDER_EXIT_REQUEST,
             Self::WithdrawalRequest => Self::WITHDRAWAL_REQUEST,
             Self::ConsolidationRequest => Self::CONSOLIDATION_REQUEST,
             Self::ExecutionPayloadBid => Self::EXECUTION_PAYLOAD_BID,
@@ -114,6 +123,8 @@ impl OperationHandler {
             Self::BlockHeader => &BLOCK_HEADER_OPERATION,
             Self::PayloadAttestation => &PAYLOAD_ATTESTATION_OPERATION,
             Self::DepositRequest => &DEPOSIT_REQUEST_OPERATION,
+            Self::BuilderDepositRequest => &BUILDER_DEPOSIT_REQUEST_OPERATION,
+            Self::BuilderExitRequest => &BUILDER_EXIT_REQUEST_OPERATION,
             Self::WithdrawalRequest => &WITHDRAWAL_REQUEST_OPERATION,
             Self::ConsolidationRequest => &CONSOLIDATION_REQUEST_OPERATION,
             Self::ExecutionPayloadBid => &EXECUTION_PAYLOAD_BID_OPERATION,
@@ -225,6 +236,15 @@ static DEPOSIT_REQUEST_OPERATION: InputOperation<DepositRequest> = InputOperatio
     FixtureFile::new("deposit_request.ssz_snappy"),
     BeaconState::process_deposit_request,
 );
+static BUILDER_DEPOSIT_REQUEST_OPERATION: InputOperation<BuilderDepositRequest> =
+    InputOperation::new(
+        FixtureFile::new("builder_deposit_request.ssz_snappy"),
+        BeaconState::process_builder_deposit_request,
+    );
+static BUILDER_EXIT_REQUEST_OPERATION: InputOperation<BuilderExitRequest> = InputOperation::new(
+    FixtureFile::new("builder_exit_request.ssz_snappy"),
+    BeaconState::process_builder_exit_request,
+);
 static WITHDRAWAL_REQUEST_OPERATION: InputOperation<WithdrawalRequest> = InputOperation::new(
     FixtureFile::new("withdrawal_request.ssz_snappy"),
     BeaconState::process_withdrawal_request,
@@ -233,10 +253,11 @@ static CONSOLIDATION_REQUEST_OPERATION: InputOperation<ConsolidationRequest> = I
     FixtureFile::new("consolidation_request.ssz_snappy"),
     BeaconState::process_consolidation_request,
 );
-static EXECUTION_PAYLOAD_BID_OPERATION: InputOperation<BeaconBlock> = InputOperation::new(
-    FixtureFile::new("block.ssz_snappy"),
-    BeaconState::process_execution_payload_bid,
-);
+static EXECUTION_PAYLOAD_BID_OPERATION: InputOperation<SignedExecutionPayloadBid> =
+    InputOperation::new(
+        FixtureFile::new("execution_payload_bid.ssz_snappy"),
+        BeaconState::process_execution_payload_bid,
+    );
 static PARENT_EXECUTION_PAYLOAD_OPERATION: InputOperation<BeaconBlock> = InputOperation::new(
     FixtureFile::new("block.ssz_snappy"),
     BeaconState::accept_parent_payload_commitment,

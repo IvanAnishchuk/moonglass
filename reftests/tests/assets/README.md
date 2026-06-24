@@ -5,7 +5,7 @@ This directory contains a small verbatim subset of the pinned
 
 The layout intentionally mirrors the upstream archive:
 
-`consensus-specs-v1.7.0-alpha.10/tests/<preset>/<fork>/<runner>/<handler>/<suite>/<case>/`
+`consensus-specs-v1.7.0-alpha.11/tests/<preset>/<fork>/<runner>/<handler>/<suite>/<case>/`
 
 Unit and integration tests use these files instead of constructing synthetic
 `manifest.yaml`, `meta.yaml`, or `steps.yaml` fixtures.

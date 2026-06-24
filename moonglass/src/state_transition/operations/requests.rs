@@ -9,46 +9,34 @@
 use crate::constants::{
     FAR_FUTURE_EPOCH, FULL_EXIT_REQUEST_AMOUNT, MIN_ACTIVATION_BALANCE,
     MIN_VALIDATOR_WITHDRAWABILITY_DELAY, PENDING_CONSOLIDATIONS_LIMIT,
-    PENDING_PARTIAL_WITHDRAWALS_LIMIT, SHARD_COMMITTEE_PERIOD,
+    PENDING_PARTIAL_WITHDRAWALS_LIMIT, SHARD_COMMITTEE_PERIOD, UNSET_DEPOSIT_REQUESTS_START_INDEX,
 };
 use crate::containers::{
-    BeaconState, ConsolidationRequest, DepositRequest, PendingConsolidation, PendingDeposit,
-    PendingPartialWithdrawal, WithdrawalRequest,
+    BeaconState, BuilderExitRequest, ConsolidationRequest, DepositRequest, PendingConsolidation,
+    PendingDeposit, PendingPartialWithdrawal, WithdrawalRequest,
 };
 use crate::error::TransitionError;
 use crate::primitives::Gwei;
 use crate::state_transition::BeaconStateLookup;
 
 impl BeaconState {
-    /// Route an execution-layer deposit request.
+    /// Queue an execution-layer deposit request onto `pending_deposits`.
     ///
-    /// Existing-builder pubkeys, or new pubkeys with builder credentials that
-    /// are not already validators or queued validator deposits with valid
-    /// proof-of-possession signatures, flow into the builder registry via
-    /// [`BeaconState::apply_deposit_for_builder`].
-    /// Everything else queues onto `pending_deposits` for the activation-churn
-    /// path in epoch processing.
+    /// The request queues with `slot = state.slot` so `process_pending_deposits`
+    /// can tell it apart from Eth1-bridge deposits, which queue with
+    /// `slot = GENESIS_SLOT` via [`BeaconState::apply_deposit`]. The first request
+    /// also fixes `deposit_requests_start_index`, the point where these requests
+    /// take over from the legacy Eth1 deposit queue. Builder deposits do not flow
+    /// through here. They arrive as their own request type, handled by
+    /// [`process_builder_deposit_request`](BeaconState::process_builder_deposit_request).
     /// Spec: `process_deposit_request`
     pub fn process_deposit_request(
         &mut self,
         request: &DepositRequest,
     ) -> Result<(), TransitionError> {
-        let is_builder = self.builders.iter().any(|b| b.pubkey == request.pubkey);
-        let is_validator = self.validators.iter().any(|v| v.pubkey == request.pubkey);
-        let is_pending = self.is_pending_validator_deposit(&request.pubkey)?;
-        let creds_are_builder =
-            Self::is_builder_withdrawal_credential(&request.withdrawal_credentials);
-        if is_builder || (creds_are_builder && !is_validator && !is_pending) {
-            return self.apply_deposit_for_builder(
-                request.pubkey,
-                request.withdrawal_credentials,
-                request.amount,
-                request.signature,
-            );
+        if self.deposit_requests_start_index == UNSET_DEPOSIT_REQUESTS_START_INDEX {
+            self.deposit_requests_start_index = request.index;
         }
-        // Validator deposit requests queue with `slot = state.slot` so
-        // `process_pending_deposits` can distinguish them from Eth1-bridge
-        // deposits (which queue with `slot = GENESIS_SLOT` via `apply_deposit`).
         self.pending_deposits.push(PendingDeposit {
             pubkey: request.pubkey,
             withdrawal_credentials: request.withdrawal_credentials,
@@ -221,6 +209,31 @@ impl BeaconState {
             target_index,
         });
         Ok(())
+    }
+
+    /// Apply a builder exit request delivered by the parent payload.
+    ///
+    /// Initiates the builder's exit only when the request names a known, active
+    /// builder, comes from that builder's own execution address, and the builder
+    /// has no pending withdrawals queued. Anything else is ignored.
+    /// Spec: `process_builder_exit_request`.
+    pub fn process_builder_exit_request(
+        &mut self,
+        request: &BuilderExitRequest,
+    ) -> Result<(), TransitionError> {
+        let Some(builder_index) = self.builder_index(&request.pubkey) else {
+            return Ok(());
+        };
+        if !self.is_active_builder(builder_index)? {
+            return Ok(());
+        }
+        if self.builder(builder_index)?.execution_address != request.source_address {
+            return Ok(());
+        }
+        if self.pending_balance_to_withdraw_for_builder(builder_index) != Gwei::ZERO {
+            return Ok(());
+        }
+        self.initiate_builder_exit(builder_index)
     }
 
     /// True when a consolidation request is actually a self-targeted switch to

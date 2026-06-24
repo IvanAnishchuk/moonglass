@@ -1,115 +1,127 @@
-//! Fork-choice checkpoint caches and pulled-up checkpoint evidence.
+//! Fork-choice [checkpoint](crate::glossary#checkpoint) caches and pulled-up
+//! checkpoint evidence.
 //!
-//! Block processing can reveal justification/finalization information before
-//! the store's realized checkpoints are advanced by time. These helpers keep
-//! both views: realized checkpoints used by fork choice now, and unrealized
-//! checkpoints pulled from block post-states for the next slot or epoch
-//! boundary.
+//! Block processing can reveal
+//! [justification](crate::glossary#justification-and-finalization)/finalization
+//! information before the store's realized checkpoints are advanced by time.
+//! These methods keep both views: realized checkpoints used by fork choice now,
+//! and unrealized checkpoints pulled from block post-states, promoted to
+//! realized at the next [epoch](crate::glossary#epoch) boundary.
+//!
+//! The admission handlers write these caches. The justified and finalized
+//! checkpoints they track are then read by [`filter`](super::filter) and
+//! [`weight`](super::weight).
 
 use crate::containers::Checkpoint;
 use crate::error::ForkChoiceError;
-use crate::primitives::{Root, Slot};
+use crate::primitives::Root;
 
 use super::store::Store;
 
-/// Raise the store's realized justified/finalized checkpoints when newer.
-///
-/// These are local fork-choice fields. They summarize what this node may use
-/// for filtering and head selection after a slot/epoch boundary realizes pulled
-/// evidence.
-pub(crate) fn update_checkpoints(store: &mut Store, justified: Checkpoint, finalized: Checkpoint) {
-    if justified.epoch > store.justified_checkpoint.epoch {
-        store.justified_checkpoint = justified;
+impl Store {
+    /// Move the store's confirmed justified and finalized checkpoints forward.
+    ///
+    /// Justified and finalized are the two stages by which consensus commits to a
+    /// block: justified means the chain has voted for it this round, finalized
+    /// means reverting it would need a slashable safety violation. This raises the
+    /// store's record of each, but only when a newer one is supplied, never
+    /// backward.
+    pub fn update_checkpoints(&mut self, justified: Checkpoint, finalized: Checkpoint) {
+        if justified.epoch > self.justified_checkpoint.epoch {
+            self.justified_checkpoint = justified;
+        }
+        if finalized.epoch > self.finalized_checkpoint.epoch {
+            self.finalized_checkpoint = finalized;
+        }
     }
-    if finalized.epoch > store.finalized_checkpoint.epoch {
-        store.finalized_checkpoint = finalized;
-    }
-}
 
-/// Cache the beacon state at an attestation's target checkpoint.
-///
-/// Fork-choice attestation validation needs the target checkpoint state to
-/// expand committee indices and verify signatures. If the exact target state is
-/// absent, this clones the target root's post-state and advances empty slots to
-/// the target epoch boundary before caching it.
-/// Spec: `store_target_checkpoint_state`.
-pub(super) fn store_target_checkpoint_state(
-    store: &mut Store,
-    target: Checkpoint,
-) -> Result<(), ForkChoiceError> {
-    if store.checkpoint_states.contains_key(&target) {
-        return Ok(());
+    /// Make sure we have the beacon state at an attestation's target checkpoint.
+    ///
+    /// To validate an attestation, fork choice needs the state as of the
+    /// checkpoint the vote targets, so it can look up the committees and check
+    /// signatures. If that state is not cached yet, this takes the target block's
+    /// state and fast-forwards it through any empty slots up to the checkpoint,
+    /// then caches the result for reuse.
+    pub fn store_target_checkpoint_state(
+        &mut self,
+        target: Checkpoint,
+    ) -> Result<(), ForkChoiceError> {
+        if self.checkpoint_states.contains_key(&target) {
+            return Ok(());
+        }
+        let mut state = self
+            .block_states
+            .get(&target.root)
+            .ok_or(ForkChoiceError::UnknownBlock(target.root))?
+            .clone();
+        let target_slot = target.epoch.start_slot();
+        if state.slot < target_slot {
+            state.process_slots(target_slot)?;
+        }
+        self.checkpoint_states.insert(target, state);
+        Ok(())
     }
-    let mut state = store
-        .block_states
-        .get(&target.root)
-        .ok_or(ForkChoiceError::UnknownBlock(target.root))?
-        .clone();
-    let slots_per_epoch = u64::try_from(crate::constants::SLOTS_PER_EPOCH).unwrap_or(u64::MAX);
-    let target_slot = Slot::new(target.epoch.as_u64() * slots_per_epoch);
-    if state.slot < target_slot {
-        state.process_slots(target_slot)?;
-    }
-    store.checkpoint_states.insert(target, state);
-    Ok(())
-}
 
-/// Raise the store's unrealized justified and finalized checkpoints.
-///
-/// These checkpoints are local fork-choice evidence pulled from block
-/// post-states. They may move ahead of the realized store checkpoints until a
-/// slot or epoch boundary makes them active.
-pub(crate) fn update_unrealized_checkpoints(
-    store: &mut Store,
-    unrealized_justified: Checkpoint,
-    unrealized_finalized: Checkpoint,
-) {
-    if unrealized_justified.epoch > store.unrealized_justified_checkpoint.epoch {
-        store.unrealized_justified_checkpoint = unrealized_justified;
+    /// Move the store's *unrealized* justified and finalized checkpoints forward.
+    ///
+    /// A block's state can already imply newer justification than the store has
+    /// formally adopted. We track that as "unrealized": running ahead of the
+    /// confirmed checkpoints, and promoted to confirmed when the clock next
+    /// crosses an [epoch](crate::glossary#epoch) boundary, in [`Store::on_tick`].
+    /// (Checkpoints implied by a block already in a past epoch are the exception:
+    /// [`Self::compute_pulled_up_tip`] adopts those at once.) This raises the
+    /// unrealized records when a newer one arrives.
+    pub fn update_unrealized_checkpoints(
+        &mut self,
+        unrealized_justified: Checkpoint,
+        unrealized_finalized: Checkpoint,
+    ) {
+        if unrealized_justified.epoch > self.unrealized_justified_checkpoint.epoch {
+            self.unrealized_justified_checkpoint = unrealized_justified;
+        }
+        if unrealized_finalized.epoch > self.unrealized_finalized_checkpoint.epoch {
+            self.unrealized_finalized_checkpoint = unrealized_finalized;
+        }
     }
-    if unrealized_finalized.epoch > store.unrealized_finalized_checkpoint.epoch {
-        store.unrealized_finalized_checkpoint = unrealized_finalized;
-    }
-}
 
-/// Computes pulled-up justification and finalization for `block_root`.
-///
-/// The stored post-state is cloned because `process_justification_and_finalization`
-/// mutates the state to derive the pulled-up checkpoints. The original state in
-/// the store must remain untouched so other lookups against `block_root` continue
-/// to see the canonical post-state.
-pub(crate) fn compute_pulled_up_tip(
-    store: &mut Store,
-    block_root: Root,
-) -> Result<(), ForkChoiceError> {
-    let mut pulled_up_state = store
-        .block_states
-        .get(&block_root)
-        .ok_or(ForkChoiceError::UnknownBlock(block_root))?
-        .clone();
-    pulled_up_state.process_justification_and_finalization()?;
-    store
-        .unrealized_justifications
-        .insert(block_root, pulled_up_state.current_justified_checkpoint);
-    update_unrealized_checkpoints(
-        store,
-        pulled_up_state.current_justified_checkpoint,
-        pulled_up_state.finalized_checkpoint,
-    );
+    /// Work out the justification a block implies, and record it as unrealized.
+    ///
+    /// After importing a block, its state may already justify or finalize more
+    /// than the store has adopted. To find out, this replays justification and
+    /// finalization on a copy of the block's state (a copy, so the stored state is
+    /// left untouched) and saves the result as the block's unrealized
+    /// justification. If the block is from a past epoch, that result is also
+    /// adopted as confirmed straight away.
+    pub fn compute_pulled_up_tip(&mut self, block_root: Root) -> Result<(), ForkChoiceError> {
+        // All fallible reads first, so an error never leaves the store maps
+        // half-updated.
+        let mut pulled_up_state = self
+            .block_states
+            .get(&block_root)
+            .ok_or(ForkChoiceError::UnknownBlock(block_root))?
+            .clone();
+        pulled_up_state.process_justification_and_finalization()?;
+        let block_epoch = self
+            .blocks
+            .get(&block_root)
+            .ok_or(ForkChoiceError::UnknownBlock(block_root))?
+            .slot
+            .epoch();
+        let current_epoch = self.get_current_store_epoch();
 
-    let block_epoch = store
-        .blocks
-        .get(&block_root)
-        .ok_or(ForkChoiceError::UnknownBlock(block_root))?
-        .slot
-        .epoch();
-    let current_epoch = super::helpers::get_current_store_epoch(store);
-    if block_epoch < current_epoch {
-        update_checkpoints(
-            store,
+        // Then the store mutations.
+        self.unrealized_justifications
+            .insert(block_root, pulled_up_state.current_justified_checkpoint);
+        self.update_unrealized_checkpoints(
             pulled_up_state.current_justified_checkpoint,
             pulled_up_state.finalized_checkpoint,
         );
+        if block_epoch < current_epoch {
+            self.update_checkpoints(
+                pulled_up_state.current_justified_checkpoint,
+                pulled_up_state.finalized_checkpoint,
+            );
+        }
+        Ok(())
     }
-    Ok(())
 }

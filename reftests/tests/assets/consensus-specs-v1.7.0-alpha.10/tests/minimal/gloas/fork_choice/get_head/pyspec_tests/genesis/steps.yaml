@@ -1,6 +1,0 @@
-- checks:
-    genesis_time: 0
-    head:
-      slot: 0
-      root: '0x2169c7883298538418a14e0df8bdd05c939b7fdcba1d5bf21820fc7701c4a382'
-      payload_status: 0

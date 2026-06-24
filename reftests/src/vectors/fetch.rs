@@ -43,21 +43,21 @@ const GENERAL_ARCHIVE: RequiredArchive = RequiredArchive {
 
 const MAINNET_ARCHIVE: RequiredArchive = RequiredArchive {
     name: "mainnet.tar.gz",
-    sha256: "17c8cf98dff97272a5089beb19af74c96144ecd950365f1d5627a131c2dcec66",
-    compressed_bytes: 848_042_413,
+    sha256: "956cc05f9bb2e745ecd04b60fb2bb91679c80ede82e81b489b5d47a9d65eb66b",
+    compressed_bytes: 851_476_438,
     limits: Limits {
-        max_entries: 66_004,
-        max_unpacked_bytes: 2_753_663_970,
+        max_entries: 66_309,
+        max_unpacked_bytes: 2_763_608_206,
     },
 };
 
 const MINIMAL_ARCHIVE: RequiredArchive = RequiredArchive {
     name: "minimal.tar.gz",
-    sha256: "59411e3bc7b67b297cbef37fa05be6af782705b2de247b5c72d7f1aad1f40d98",
-    compressed_bytes: 413_973_744,
+    sha256: "8ab52feb780e034dde188143db709adcfb03abcee8beb03f1d502fb521baff4a",
+    compressed_bytes: 412_296_024,
     limits: Limits {
-        max_entries: 404_827,
-        max_unpacked_bytes: 705_802_528,
+        max_entries: 425_672,
+        max_unpacked_bytes: 722_124_429,
     },
 };
 

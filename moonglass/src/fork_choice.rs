@@ -1,150 +1,108 @@
-//! Fork choice over accepted blocks and attestations.
+//! Fork choice: deciding which block is the head of the chain.
 //!
-//! Reads accepted blocks and attestations, decides which leaf the next
-//! block should build on. Reuses [`crate::state_transition`] to advance
-//! cached states. This module does not duplicate transition rules.
+//! Many valid blocks can compete to extend the chain. Fork choice is the rule
+//! that picks one canonical [head](crate::glossary#head) from them, by following
+//! the branch with the most [validator](crate::glossary#validator) support. This
+//! module holds a node's local view of that contest and walks it to a head,
+//! reusing [`crate::state_transition`] to advance states rather than re-checking
+//! blocks itself.
 //!
-//! Public entry points and `Store` fields stay close to the consensus-specs
-//! fork-choice documents where that helps side-by-side reading. Local helpers
-//! may use clearer Rust names when they expose a hidden protocol handoff.
+//! # Model
 //!
-//! # Reading routes
+//! Fork choice answers one question: which node is the head? The unit of choice
+//! is a [`ForkChoiceNode`], a block root paired with a [`PayloadStatus`] of
+//! [`Empty`](PayloadStatus::Empty), [`Full`](PayloadStatus::Full), or
+//! [`Pending`](PayloadStatus::Pending). One block root is therefore several
+//! nodes: pending before its payload resolves, then the empty or full branch
+//! once votes and a recorded envelope decide. Weight, votes, and ancestry all
+//! range over these nodes, not over bare block roots. Everything else follows:
 //!
-//! - [`get_forkchoice_store`] seeds [`Store`] from an anchor block and state.
-//! - [`on_tick()`] advances the store clock and resets proposer boost at slot
-//!   boundaries.
-//! - [`on_block()`] validates a block against the local store, runs the state
-//!   transition, records the block/post-state, records block-embedded PTC votes,
-//!   and updates fork-choice checkpoints.
-//! - [`on_execution_payload_envelope()`](on_execution_payload_envelope::on_execution_payload_envelope)
-//!   records a delivered payload envelope under the current verification boundary
-//!   and records it in [`Store::payloads`](store::Store::payloads).
-//! - [`on_attestation()`] records LMD-GHOST latest messages after checking the
-//!   attestation's target and, for full-payload votes, the recorded
-//!   envelope boundary.
-//! - [`on_payload_attestation_message()`] records gossip PTC votes for payload
-//!   timeliness and data availability.
-//! - [`get_head`] walks [`ForkChoiceNode`] branches, including the
-//!   full, empty, and pending payload-status branches.
+//! - [`Store`] holds this node's local evidence: known blocks and post-states,
+//!   latest votes, recorded payload envelopes, and PTC vote vectors.
+//! - Handlers fold each incoming message into the store.
+//! - [`get_head`](Store::get_head) walks the store from the justified root,
+//!   expands every block into its branch nodes, and keeps the heaviest node at
+//!   each step.
 //!
-//! # Execution-payload verification boundary
+//! # Reading order
 //!
-//! The envelope handler currently runs the consensus-side checks on an
-//! execution payload envelope: beacon block roots, required envelope signature,
-//! bid-matched payload fields, payload slot, parent execution hash, timestamp,
-//! requests root, and withdrawals. Execution-engine validity and blob
-//! data-availability verification are not wired in. Within that boundary,
-//! [`on_execution_payload_envelope`](on_execution_payload_envelope::on_execution_payload_envelope)
-//! records a consensus-checked envelope in
-//! [`Store::payloads`](store::Store::payloads), so fork choice can exercise the
-//! full, empty, and pending payload branches without that being a complete execution or
-//! data-availability verdict.
+//! The submodules read top to bottom as the life of a head decision.
 //!
-//! Execution-engine and blob-KZG verification are still pending before
-//! [`Store::payloads`](store::Store::payloads) can mean complete execution and
-//! data-availability validity.
+//! 1. [`store`] is the evidence set and the core data model it is built on,
+//!    [`ForkChoiceNode`] and [`PayloadStatus`]. [`get_forkchoice_store`] seeds it
+//!    from an anchor block and state.
+//! 2. [`payload_status`] holds the rules that resolve a node's empty/full/pending
+//!    status, which the rest of the module reasons about.
+//! 3. Admission folds messages into the store: [`on_block()`](Store::on_block)
+//!    runs the state transition and records the block,
+//!    [`on_execution_payload_envelope()`](Store::on_execution_payload_envelope)
+//!    records a delivered payload, [`on_attestation()`](Store::on_attestation)
+//!    records latest votes,
+//!    [`on_payload_attestation_message()`](Store::on_payload_attestation_message)
+//!    records PTC votes, and [`on_tick()`](Store::on_tick) advances the clock.
+//! 4. Selection reads the store: [`filter`] keeps only viable branches,
+//!    [`weight`] scores a node from votes plus proposer boost, and [`head`]
+//!    walks branch by branch to the heaviest leaf.
+//! 5. [`proposer_head`] decides whether the current proposer should skip a late,
+//!    weakly-supported head and build on its parent instead (a re-org).
+//! 6. Plumbing supports the above: [`helpers`] (clock, ancestry, checkpoint
+//!    roots), [`checkpoints`] (realized and pulled-up justification), and
+//!    [`timeliness`] (block arrival and proposer-boost selection).
 //!
-//! # Worked trace
+//! # What "recording a payload" means
 //!
-//! One payload's life through the implemented surface, for a block `B` at slot
-//! `N` building on parent `P`, and a child `C` whose parent-payload handoff
-//! proves `B`'s delivered payload. Each step names the handler that owns it. The
-//! state transition records the bid commitment, the envelope path records local
-//! payload evidence, block-body PTC aggregates are validated by state transition
-//! and replayed by [`on_block()`], gossip PTC messages use the separate
-//! validator-index path, beacon attestations update latest messages, [`get_head`]
-//! reads the resulting local view, and
-//! [`BeaconState::accept_parent_payload_commitment`](crate::containers::BeaconState::accept_parent_payload_commitment)
-//! settles the payload when a child block proves it.
+//! One boundary is worth stating up front. Beyond the consensus-side checks, a
+//! complete verdict needs a data-availability check and an execution-engine
+//! check, but in
+//! [`on_execution_payload_envelope()`](Store::on_execution_payload_envelope) both
+//! are mocked and always pass (a TODO). So today a recorded payload means only
+//! that the consensus-side checks passed (the signature, and that the payload
+//! matches the committed bid, slot, parent hash, timestamp, and withdrawals).
+//! That is enough for fork choice to open a block's full branch, but it is not
+//! yet a complete validity verdict.
 //!
-//! ```text
-//! slot N: builder bid for block B
-//!   process_execution_payload_bid(state, B)
-//!     checks bid.slot == N, parent_block_root == P, parent_block_hash,
-//!       prev_randao, blob limit, self-build sentinel or active funded builder
-//!       signer
-//!     writes state.latest_execution_payload_bid = bid
-//!     opens builder_pending_payments[SLOTS_PER_EPOCH + N % SLOTS_PER_EPOCH]
-//!       with weight 0 (non-zero bid only)
+//! # A block's payload, end to end
 //!
-//! slot N: block B enters fork choice
-//!   on_block(store, signed_B)
-//!     requires P in block_states and runs the state transition for B
-//!     writes blocks[B] = block, block_states[B] = post-state
-//!     seeds payload_timeliness_vote[B] and payload_data_availability_vote[B]
-//!       to PTC_SIZE None entries
-//!     replays validated block-embedded PTC aggregates into local vote vectors
+//! It helps to follow one block `B`, proposed on top of a parent `P`.
 //!
-//! slot N+1 or later: beacon attestations for B are included
-//!   process_attestation(later_state, attestation with data.slot == N)
-//!     after the normal inclusion delay, a fresh vote for B's slot adds
-//!       effective-balance weight to B's open builder payment
-//!
-//! slot N: delivered envelope for block B
-//!   on_execution_payload_envelope(store, signed_envelope for B)
-//!     runs process_execution_payload (consensus-side checks)
-//!     writes payloads[B] = envelope under the verification boundary
-//!
-//! slot N: payload-timeliness votes
-//!   block aggregate: B's embedded payload attestations vote on the parent
-//!     payload at slot N-1. `process_payload_attestation` validates the aggregate,
-//!     and after on_block stores B, fork choice records those votes under P
-//!   gossip: on_payload_attestation_message(store, msg, is_from_block = false)
-//!     votes on B's own payload at slot N through the separate validator-index
-//!     path, expands msg.validator_index to every PTC position it occupies, and
-//!     records payload_present and blob_data_available under B
-//!
-//! slot N+1 or later: beacon attestation records a branch vote
-//!   on_attestation(store, att, is_from_block)
-//!     store clock must be at least att.data.slot + 1
-//!     if attested block is at att.data.slot, index must be 0 and support is pending
-//!     for older attested blocks, index 0 votes empty and index 1 votes full,
-//!       admitted only when payloads[B] is already recorded
-//!     writes latest_messages[validator] = { att.data.slot, B, payload_present }
-//!
-//! slot N: read the head after block, envelope, and PTC evidence
-//!   get_head(store) -> ForkChoiceNode { root: B, payload_status }
-//!     walks nodes from the justified root, keeping the heaviest child,
-//!       tie-broken on larger root then on the full-branch ordering
-//!
-//! slot N+1 or later: read the head after beacon branch votes
-//!   get_head(store) now also reflects latest_messages from admitted beacon
-//!     attestations for B
-//!
-//! child C settles B's payload
-//!   accept_parent_payload_commitment(child_state, C)
-//!     when C's bid.parent_block_hash matches B's payload block_hash and the
-//!       carried parent_execution_requests hash-match B's committed root:
-//!         applies B's deposit, withdrawal, consolidation requests
-//!         releases the builder payment opened at slot N
-//!         sets execution_payload_availability[B.bid.slot % SLOTS_PER_HISTORICAL_ROOT]
-//!         advances latest_block_hash to B's payload block_hash
-//!     then C runs its own process_execution_payload_bid
-//! ```
+//! 1. The proposer commits to a payload by including a builder bid in `B`, and
+//!    the state transition checks and records that bid through
+//!    [`process_execution_payload_bid`](crate::containers::BeaconState::process_execution_payload_bid).
+//! 2. [`on_block()`](Store::on_block) validates `B`, stores it and its resulting
+//!    state, and sets up empty vote vectors for it.
+//! 3. When `B`'s payload arrives,
+//!    [`on_execution_payload_envelope()`](Store::on_execution_payload_envelope)
+//!    checks and records it, which is what lets `B`'s full branch exist.
+//! 4. The payload-timeliness committee votes on whether that payload was on time
+//!    and its data available, and
+//!    [`on_payload_attestation_message()`](Store::on_payload_attestation_message)
+//!    folds those votes in.
+//! 5. A slot later, beacon attestations for `B` arrive, and
+//!    [`on_attestation()`](Store::on_attestation) records each as its voter's
+//!    latest message, choosing the empty or full branch.
+//! 6. [`get_head`](Store::get_head) reads all of this and returns the winning
+//!    block-and-branch node. Later, when a child block builds on `B`'s payload,
+//!    it proves and applies that payload's commitment to its own state through
+//!    [`accept_parent_payload_commitment`](crate::containers::BeaconState::accept_parent_payload_commitment).
 
-mod checkpoints;
-mod filter;
-mod head;
-mod helpers;
-mod on_attestation;
-mod on_attester_slashing;
-mod on_block;
-mod on_execution_payload_envelope;
-mod on_payload_attestation_message;
-mod on_tick;
-mod payload_status;
-mod store;
-mod timeliness;
-mod weight;
+#![allow(clippy::must_use_candidate)]
 
-pub use head::get_head;
-pub use on_attestation::on_attestation;
-pub use on_attester_slashing::on_attester_slashing;
-pub use on_block::{on_block, on_block_with_embedded_messages};
-pub use on_execution_payload_envelope::on_execution_payload_envelope;
-pub use on_payload_attestation_message::on_payload_attestation_message;
-pub use on_tick::on_tick;
-pub use payload_status::get_parent_payload_status;
+pub mod checkpoints;
+pub mod filter;
+pub mod head;
+pub mod helpers;
+pub mod on_attestation;
+pub mod on_attester_slashing;
+pub mod on_block;
+pub mod on_execution_payload_envelope;
+pub mod on_payload_attestation_message;
+pub mod on_tick;
+pub mod payload_status;
+pub mod proposer_head;
+pub mod store;
+pub mod timeliness;
+pub mod weight;
+
 pub use store::{ForkChoiceNode, LatestMessage, PayloadStatus, Store, get_forkchoice_store};
 
 /// Diagnostic helpers for tests and developer tooling.

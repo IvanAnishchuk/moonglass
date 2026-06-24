@@ -191,7 +191,7 @@ impl BeaconState {
     /// This writes participation flags, proposer reward balance changes, and
     /// possibly builder-payment quorum weight when the attested block was fresh
     /// in its own slot. It does not write fork-choice latest messages.
-    /// [`fork_choice::on_attestation`](crate::fork_choice::on_attestation)
+    /// [`Store::on_attestation()`](crate::fork_choice::Store::on_attestation)
     /// handles that in the local store.
     /// Spec: `process_attestation`
     pub fn process_attestation(

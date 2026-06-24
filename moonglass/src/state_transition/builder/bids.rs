@@ -9,15 +9,15 @@
 //! the handoff.
 
 use crate::constants::{
-    BLOB_SCHEDULE, BUILDER_INDEX_SELF_BUILD, DOMAIN_BEACON_BUILDER, MAX_BLOBS_PER_BLOCK,
-    MIN_DEPOSIT_AMOUNT, SLOTS_PER_EPOCH,
+    BLOB_SCHEDULE, BUILDER_INDEX_SELF_BUILD, DOMAIN_BEACON_BUILDER, GENESIS_SLOT,
+    MAX_BLOBS_PER_BLOCK, MIN_DEPOSIT_AMOUNT, PAYLOAD_BUILDER_VERSION, SLOTS_PER_EPOCH,
 };
 use crate::containers::{
-    BeaconBlock, BeaconState, BuilderPendingPayment, BuilderPendingWithdrawal, ExecutionPayloadBid,
+    BeaconState, BuilderPendingPayment, BuilderPendingWithdrawal, ExecutionPayloadBid,
     SignedExecutionPayloadBid,
 };
 use crate::error::{MerkleError, OperationError, SignatureError, TransitionError};
-use crate::primitives::{BuilderIndex, Epoch, Gwei};
+use crate::primitives::{BuilderIndex, Epoch, Gwei, Slot, ValidatorIndex};
 use crate::state_transition::{BeaconStateLookup, verify_signature};
 
 impl BeaconState {
@@ -97,9 +97,10 @@ impl BeaconState {
         )
     }
 
-    /// Accept the current block's builder bid and open its pending payment.
+    /// Accept a builder's payload bid for the current slot and open its pending
+    /// payment.
     ///
-    /// The bid in the block body is checked against the current slot, the parent
+    /// The signed bid is checked against the current slot, the parent
     /// root and parent block hash, the slot's RANDAO mix, and the active
     /// blob-commitment limit. Self-builds must carry zero value and the point at
     /// infinity as the bid signature, relying on the proposer's signed block for
@@ -118,32 +119,31 @@ impl BeaconState {
     /// Spec: `process_execution_payload_bid`
     pub fn process_execution_payload_bid(
         &mut self,
-        block: &BeaconBlock,
+        signed_bid: &SignedExecutionPayloadBid,
     ) -> Result<(), TransitionError> {
-        let signed_bid = &block.body.signed_execution_payload_bid;
         let bid = &signed_bid.message;
 
-        self.validate_bid_identity(block, bid)?;
+        self.validate_bid_identity(bid)?;
         self.validate_bid_signer_and_funding(signed_bid)?;
-        self.record_accepted_bid(bid);
+        let proposer_index = self.beacon_proposer_index()?;
+        self.record_accepted_bid(bid, proposer_index);
         Ok(())
     }
 
-    /// Check bid fields that must match the current block and state.
+    /// Check bid fields that must match the current state.
     ///
     /// This is the pure identity side of bid acceptance: slot, parent roots and
-    /// hashes, RANDAO, and active blob limit. It does not check signer status or
+    /// hashes, RANDAO, and active blob limit. The parent block root is taken from
+    /// the state's history at the previous slot, not from any containing block, so
+    /// the bid can be checked on its own. It does not check signer status or
     /// builder funding.
-    fn validate_bid_identity(
-        &self,
-        block: &BeaconBlock,
-        bid: &ExecutionPayloadBid,
-    ) -> Result<(), TransitionError> {
-        if bid.slot != self.slot || bid.slot != block.slot {
+    fn validate_bid_identity(&self, bid: &ExecutionPayloadBid) -> Result<(), TransitionError> {
+        if bid.slot != self.slot || self.slot == GENESIS_SLOT {
             return Err(OperationError::BuilderBidSlotMismatch.into());
         }
 
-        if bid.parent_block_root != block.parent_root {
+        let parent_block_root = self.block_root_at_slot(Slot::new(self.slot.as_u64() - 1));
+        if bid.parent_block_root != parent_block_root {
             return Err(OperationError::BuilderBidParentMismatch.into());
         }
         if bid.parent_block_hash != self.latest_block_hash {
@@ -183,6 +183,9 @@ impl BeaconState {
         if !self.is_active_builder(builder_index)? {
             return Err(OperationError::BuilderNotActive(builder_index).into());
         }
+        if self.builder(builder_index)?.version != PAYLOAD_BUILDER_VERSION {
+            return Err(OperationError::BuilderNotPayloadVersion(builder_index).into());
+        }
         if !self.builder_balance_covers_bid(builder_index, bid.value) {
             return Err(OperationError::BuilderInsufficientBalance(builder_index).into());
         }
@@ -193,7 +196,7 @@ impl BeaconState {
     ///
     /// This records only the bid commitment. The payload itself is still checked
     /// later through the envelope path and settled by a child block.
-    fn record_accepted_bid(&mut self, bid: &ExecutionPayloadBid) {
+    fn record_accepted_bid(&mut self, bid: &ExecutionPayloadBid, proposer_index: ValidatorIndex) {
         self.latest_execution_payload_bid = bid.clone();
         if bid.value.as_u64() == 0 {
             return;
@@ -205,6 +208,7 @@ impl BeaconState {
                 amount: bid.value,
                 builder_index: bid.builder_index,
             },
+            proposer_index,
         };
         let window_index = SLOTS_PER_EPOCH + bid.slot % SLOTS_PER_EPOCH;
         self.builder_pending_payments[window_index] = payment;

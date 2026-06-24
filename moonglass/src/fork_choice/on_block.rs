@@ -1,183 +1,180 @@
-//! Fork-choice block admission.
+//! Taking in a new [block](crate::glossary#beacon-block).
 //!
-//! `on_block` is the bridge from state transition to fork choice. It takes a
-//! signed block whose parent is already known, runs the block through
-//! [`BeaconState::apply_signed_block`](crate::containers::BeaconState::apply_signed_block), stores the resulting post-state under
-//! the new block root, initializes that block's PTC vote vectors, and then
-//! updates timeliness, proposer boost, and checkpoints. The state transition
-//! still validates and applies block-body attestations and slashings. `on_block`
-//! does not also write the fork-choice `latest_messages` or
-//! `equivocating_indices` maps for those messages. Callers that want reference
-//! test replay semantics feed them through their own fork-choice handlers after
-//! block import.
+//! [`Store::on_block`] is the doorway from the state transition into fork choice.
+//! Given a signed block whose parent we already know, it runs the block through
+//! the state transition and, if that succeeds, files the block and its resulting
+//! state in the store, sets up its empty vote vectors, and records its
+//! timeliness, proposer boost, and [checkpoints](crate::glossary#checkpoint).
+//! The state transition itself checks and applies the
+//! [attestations](crate::glossary#attestation) and slashings carried inside the
+//! block. Turning those into fork-choice votes is left to the other handlers,
+//! wired up by [`Store::on_block_with_embedded_messages`] for the reference tests.
 
 use crate::constants::PTC_SIZE;
 use crate::containers::{
     BeaconState, PayloadAttestation, PayloadAttestationMessage, SignedBeaconBlock,
 };
 use crate::error::{ForkChoiceError, MerkleError};
-use crate::primitives::{BLSSignature, Slot};
+use crate::primitives::BLSSignature;
 use crate::state_transition::TreeRootExt as _;
 
-use super::checkpoints::{compute_pulled_up_tip, update_checkpoints};
-use super::head::get_head;
-use super::helpers::{get_checkpoint_block, get_current_slot};
-use super::on_attestation::on_attestation;
-use super::on_attester_slashing::on_attester_slashing;
-use super::on_payload_attestation_message::on_payload_attestation_message;
-use super::payload_status::{has_recorded_payload_envelope, is_parent_node_full};
 use super::store::Store;
-use super::timeliness::{record_block_timeliness, update_proposer_boost_root};
 
-/// Validate `signed_block`, derive its post-state, and insert both into `store`.
-///
-/// Reads the parent post-state from [`Store::block_states`](super::store::Store::block_states),
-/// rejects blocks that are unknown, too early, too far ahead of the local clock,
-/// or inconsistent with finality, then applies the state transition on a clone.
-/// On success it writes [`Store::blocks`](super::store::Store::blocks),
-/// [`Store::block_states`](super::store::Store::block_states),
-/// PTC vote vectors, block timeliness, proposer boost, and realized/unrealized
-/// checkpoints. These are local fork-choice writes, not new consensus-state
-/// fields.
-/// Spec: `on_block`. Block-embedded attestations and attester slashings are
-/// validated and applied by the state transition, but their fork-choice message
-/// maps are updated by separate fork-choice message handlers.
-pub fn on_block(
-    store: &mut Store,
-    signed_block: &SignedBeaconBlock,
-) -> Result<(), ForkChoiceError> {
-    let block = &signed_block.message;
-
-    if !store.block_states.contains_key(&block.parent_root) {
-        return Err(ForkChoiceError::UnknownParent(block.parent_root));
+impl Store {
+    /// Validate a new block, compute its state, and file both in the store.
+    ///
+    /// This is the main entry for accepting a block. It first refuses the block
+    /// outright if the parent is unknown, if the block claims a full parent whose
+    /// payload we have not seen, if it is from the future, or if it does not
+    /// descend from what we have already finalized. It then runs the state
+    /// transition on a copy of the parent's state to derive the new block's state.
+    /// On success it records the block and state, seeds empty payload-vote
+    /// vectors, replays the payload-attestation votes carried in the block, and
+    /// updates timeliness, proposer boost, and checkpoints. All of this is local
+    /// fork-choice bookkeeping, not new chain state.
+    ///
+    /// Runs on a scratch copy and commits only on success, so a rejected block
+    /// leaves the store unchanged.
+    pub fn on_block(&mut self, signed_block: &SignedBeaconBlock) -> Result<(), ForkChoiceError> {
+        let mut scratch = self.clone();
+        scratch.on_block_inner(signed_block)?;
+        *self = scratch;
+        Ok(())
     }
 
-    if is_parent_node_full(store, block)?
-        && !has_recorded_payload_envelope(store, block.parent_root)
-    {
-        return Err(ForkChoiceError::PayloadParentEnvelopeNotRecorded(
-            block.parent_root,
-        ));
-    }
+    /// Non-transactional body of [`Self::on_block`], used by
+    /// [`Self::on_block_with_embedded_messages`] inside its own transaction.
+    pub fn on_block_inner(
+        &mut self,
+        signed_block: &SignedBeaconBlock,
+    ) -> Result<(), ForkChoiceError> {
+        let block = &signed_block.message;
 
-    let current = get_current_slot(store);
-    if current < block.slot {
-        return Err(ForkChoiceError::BlockFromFuture {
-            block_slot: block.slot,
-            current_slot: current,
-        });
-    }
-
-    let slots_per_epoch = u64::try_from(crate::constants::SLOTS_PER_EPOCH).unwrap_or(u64::MAX);
-    let finalized_slot = Slot::new(store.finalized_checkpoint.epoch.as_u64() * slots_per_epoch);
-    if block.slot <= finalized_slot {
-        return Err(ForkChoiceError::BlockBeforeFinalizedSlot {
-            block_slot: block.slot,
-            finalized_slot,
-        });
-    }
-
-    let finalized_checkpoint_block =
-        get_checkpoint_block(store, block.parent_root, store.finalized_checkpoint.epoch)?;
-    if store.finalized_checkpoint.root != finalized_checkpoint_block {
-        return Err(ForkChoiceError::BlockNotDescendedFromFinalized);
-    }
-
-    let mut state = store
-        .block_states
-        .get(&block.parent_root)
-        .ok_or(ForkChoiceError::UnknownParent(block.parent_root))?
-        .clone();
-
-    let mut block_clone = block.clone();
-    let block_root = block_clone.tree_root(MerkleError::BeaconBlock)?;
-    state.apply_signed_block(signed_block)?;
-
-    let head = get_head(store)?;
-    store.blocks.insert(block_root, block.clone());
-    store.block_states.insert(block_root, state.clone());
-    store
-        .payload_timeliness_vote
-        .insert(block_root, vec![None; PTC_SIZE]);
-    store
-        .payload_data_availability_vote
-        .insert(block_root, vec![None; PTC_SIZE]);
-
-    notify_ptc_messages(store, &state, &block.body.payload_attestations)?;
-
-    record_block_timeliness(store, block_root)?;
-    update_proposer_boost_root(store, head.root, block_root)?;
-
-    update_checkpoints(
-        store,
-        state.current_justified_checkpoint,
-        state.finalized_checkpoint,
-    );
-    compute_pulled_up_tip(store, block_root)?;
-
-    Ok(())
-}
-
-/// Import a block and record its embedded beacon fork-choice messages.
-///
-/// This is the block-driving shape used by consensus-spec reference tests:
-/// first run [`on_block`] to validate and import the block, then feed
-/// block-body beacon attestations through [`on_attestation`] with
-/// `is_from_block = true`, and block-body slashing evidence through
-/// [`on_attester_slashing`]. PTC payload attestations remain part of
-/// [`on_block`] itself because they need the imported block's post-state and
-/// target vote vectors.
-///
-/// The caller's store is updated only if the block import and all embedded
-/// message replays succeed.
-pub fn on_block_with_embedded_messages(
-    store: &mut Store,
-    signed_block: &SignedBeaconBlock,
-) -> Result<(), ForkChoiceError> {
-    let mut updated = store.clone();
-    on_block(&mut updated, signed_block)?;
-    for attestation in signed_block.message.body.attestations.iter() {
-        on_attestation(&mut updated, attestation, true)?;
-    }
-    for slashing in signed_block.message.body.attester_slashings.iter() {
-        on_attester_slashing(&mut updated, slashing)?;
-    }
-    *store = updated;
-    Ok(())
-}
-
-/// Feed block-embedded PTC aggregates into the fork-choice vote vectors.
-///
-/// The state transition has already validated aggregate signatures. This helper
-/// expands each aggregate to validator indices and then reuses the gossip
-/// handler's validator-to-PTC-position expansion before mutating the store. The
-/// aggregate in the current block targets the parent root named in
-/// `attestation.data.beacon_block_root`. The current block's freshly initialized
-/// PTC vectors are for later votes about the current block.
-fn notify_ptc_messages(
-    store: &mut Store,
-    state: &BeaconState,
-    payload_attestations: &[PayloadAttestation],
-) -> Result<(), ForkChoiceError> {
-    // A genesis block has no previous slot to attest, matching the spec guard.
-    if state.slot.as_u64() == 0 {
-        return Ok(());
-    }
-    // Expand each block aggregate into its attesting validators using the
-    // block's committee, then feed each validator through the same handler the
-    // gossip path uses. The from-block path skips the current-slot check and
-    // signature the block already verified, and records under the aggregate's
-    // target root, not the containing block root.
-    for attestation in payload_attestations {
-        let indexed = state.indexed_payload_attestation(attestation.data.slot, attestation)?;
-        for validator_index in indexed.attesting_indices.iter() {
-            let message = PayloadAttestationMessage {
-                validator_index: *validator_index,
-                data: attestation.data,
-                signature: BLSSignature::default(),
-            };
-            on_payload_attestation_message(store, &message, true)?;
+        // Phase 1: pre-import validation. Each check rejects the block outright.
+        // Bind the parent post-state up front, which both proves the parent is
+        // known and gives phase 2 the state to copy without a second lookup.
+        let parent_state = self
+            .block_states
+            .get(&block.parent_root)
+            .ok_or(ForkChoiceError::UnknownParent(block.parent_root))?;
+        if self.is_parent_node_full(block)? && !self.is_payload_verified(block.parent_root) {
+            return Err(ForkChoiceError::PayloadParentEnvelopeNotRecorded(
+                block.parent_root,
+            ));
         }
+        let current = self.get_current_slot();
+        if current < block.slot {
+            return Err(ForkChoiceError::BlockFromFuture {
+                block_slot: block.slot,
+                current_slot: current,
+            });
+        }
+        let finalized_slot = self.finalized_checkpoint.epoch.start_slot();
+        if block.slot <= finalized_slot {
+            return Err(ForkChoiceError::BlockBeforeFinalizedSlot {
+                block_slot: block.slot,
+                finalized_slot,
+            });
+        }
+        let finalized_checkpoint_block =
+            self.get_checkpoint_block(block.parent_root, self.finalized_checkpoint.epoch)?;
+        if self.finalized_checkpoint.root != finalized_checkpoint_block {
+            return Err(ForkChoiceError::BlockNotDescendedFromFinalized);
+        }
+
+        // Phase 2: run the state transition to derive the block's post-state.
+        let mut state = parent_state.clone();
+        let mut block_clone = block.clone();
+        let block_root = block_clone.tree_root(MerkleError::BeaconBlock)?;
+        state.apply_signed_block(signed_block)?;
+
+        // The head as of before this block is imported, used by proposer-boost
+        // selection in phase 5.
+        let pre_import_head = self.get_head()?;
+
+        // Phase 3: record the block, its post-state, and empty PTC vote vectors.
+        self.blocks.insert(block_root, block.clone());
+        self.block_states.insert(block_root, state.clone());
+        self.payload_timeliness_vote
+            .insert(block_root, vec![None; PTC_SIZE]);
+        self.payload_data_availability_vote
+            .insert(block_root, vec![None; PTC_SIZE]);
+
+        // Phase 4: replay the payload-attestation votes carried in the block.
+        self.notify_ptc_messages(&state, &block.body.payload_attestations)?;
+
+        // Phase 5: record timeliness, then update proposer boost and checkpoints.
+        self.record_block_timeliness(block_root)?;
+        self.update_proposer_boost_root(pre_import_head.root, block_root)?;
+        self.update_checkpoints(
+            state.current_justified_checkpoint,
+            state.finalized_checkpoint,
+        );
+        self.compute_pulled_up_tip(block_root)?;
+
+        Ok(())
     }
-    Ok(())
+
+    /// Import a block, then replay the fork-choice votes carried in it.
+    ///
+    /// This is the one-block-at-a-time shape the reference tests drive, mirroring
+    /// the harness's block step. It imports the block with [`Self::on_block`], then
+    /// replays the block's beacon attestations through [`Self::on_attestation`] and
+    /// its attester slashings through [`Self::on_attester_slashing`], each marked
+    /// as arriving inside a block. The block's payload attestations are already
+    /// folded in by [`Self::on_block`] itself. Every step must succeed, so a
+    /// failure anywhere is the block step's verdict, matching the reference
+    /// harness, which replays these as required steps rather than optional ones.
+    /// The work runs on a copy of the store and is committed only once all steps
+    /// succeed, leaving the caller's store untouched on any error.
+    pub fn on_block_with_embedded_messages(
+        &mut self,
+        signed_block: &SignedBeaconBlock,
+    ) -> Result<(), ForkChoiceError> {
+        let mut updated = self.clone();
+        updated.on_block_inner(signed_block)?;
+        for attestation in signed_block.message.body.attestations.iter() {
+            updated.on_attestation_inner(attestation, true)?;
+        }
+        for slashing in signed_block.message.body.attester_slashings.iter() {
+            updated.on_attester_slashing(slashing)?;
+        }
+        *self = updated;
+        Ok(())
+    }
+
+    /// Fold a block's bundled payload-attestation votes into the store.
+    ///
+    /// A block carries the previous slot's committee votes about its parent's
+    /// payload. The state transition has already checked those as a group, so this
+    /// expands each into individual validators and records their votes through the
+    /// same path gossip votes use ([`Self::on_payload_attestation_message`]). The
+    /// genesis block has no previous slot to vote on, so it is skipped.
+    pub fn notify_ptc_messages(
+        &mut self,
+        state: &BeaconState,
+        payload_attestations: &[PayloadAttestation],
+    ) -> Result<(), ForkChoiceError> {
+        // A genesis block has no previous slot to attest.
+        if state.slot.as_u64() == 0 {
+            return Ok(());
+        }
+        // Expand each block aggregate into its attesting validators using the
+        // block's committee, then feed each validator through the same handler the
+        // gossip path uses. The from-block path skips the current-slot check and
+        // signature the block already verified, and records under the aggregate's
+        // target root, not the containing block root.
+        for attestation in payload_attestations {
+            let indexed = state.indexed_payload_attestation(attestation.data.slot, attestation)?;
+            for validator_index in indexed.attesting_indices.iter() {
+                let message = PayloadAttestationMessage {
+                    validator_index: *validator_index,
+                    data: attestation.data,
+                    signature: BLSSignature::default(),
+                };
+                self.on_payload_attestation_message_inner(&message, true)?;
+            }
+        }
+        Ok(())
+    }
 }

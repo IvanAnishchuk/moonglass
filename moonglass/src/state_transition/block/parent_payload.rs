@@ -118,6 +118,12 @@ impl BeaconState {
         for c in requests.consolidations.iter() {
             self.process_consolidation_request(c)?;
         }
+        for d in requests.builder_deposits.iter() {
+            self.process_builder_deposit_request(d)?;
+        }
+        for e in requests.builder_exits.iter() {
+            self.process_builder_exit_request(e)?;
+        }
         Ok(())
     }
 }

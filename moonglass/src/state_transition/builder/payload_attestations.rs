@@ -100,7 +100,7 @@ impl BeaconState {
     /// weight comes only from beacon attestations for the proposal slot in
     /// [`BeaconState::process_attestation`]. The per-slot payload-availability
     /// bit is set separately when the child block accepts the parent payload, and
-    /// [`crate::fork_choice::on_block`] later records local PTC vote vectors.
+    /// [`crate::fork_choice::Store::on_block()`] later records local PTC vote vectors.
     /// Spec: `process_payload_attestation`
     pub fn process_payload_attestation(
         &mut self,

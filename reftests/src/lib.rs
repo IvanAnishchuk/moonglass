@@ -16,7 +16,7 @@ mod testing;
 pub use error::{Error, Result};
 
 /// `ethereum/consensus-specs` release targeted by the runner.
-pub const CONSENSUS_SPECS_TAG: &str = "v1.7.0-alpha.10";
+pub const CONSENSUS_SPECS_TAG: &str = "v1.7.0-alpha.11";
 
 /// Fork currently targeted within the consensus-specs release.
 const TARGET_FORK: &str = "gloas";

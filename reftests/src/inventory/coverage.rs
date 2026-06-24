@@ -311,7 +311,7 @@ const MAINNET_RUNNABLE: &[ExpectedCount] = &[
         "epoch_processing/pending_consolidations",
         13,
     ),
-    ExpectedCount::preset(MAINNET_PRESET, "epoch_processing/pending_deposits", 41),
+    ExpectedCount::preset(MAINNET_PRESET, "epoch_processing/pending_deposits", 42),
     ExpectedCount::preset(MAINNET_PRESET, "epoch_processing/pending_deposits_churn", 1),
     ExpectedCount::preset(MAINNET_PRESET, "epoch_processing/proposer_lookahead", 4),
     ExpectedCount::preset(MAINNET_PRESET, "epoch_processing/ptc_window", 1),
@@ -322,35 +322,39 @@ const MAINNET_RUNNABLE: &[ExpectedCount] = &[
     ExpectedCount::preset(MAINNET_PRESET, "epoch_processing/slashings_reset", 1),
     ExpectedCount::preset(MAINNET_PRESET, "finality/finality", 5),
     ExpectedCount::preset(MAINNET_PRESET, "fork_choice/ex_ante", 4),
-    ExpectedCount::preset(MAINNET_PRESET, "fork_choice/get_head", 5),
+    ExpectedCount::preset(MAINNET_PRESET, "fork_choice/get_head", 7),
     ExpectedCount::preset(MAINNET_PRESET, "fork_choice/get_parent_payload_status", 1),
     ExpectedCount::preset(MAINNET_PRESET, "fork_choice/on_attestation", 5),
-    ExpectedCount::preset(MAINNET_PRESET, "fork_choice/on_block", 6),
+    ExpectedCount::preset(MAINNET_PRESET, "fork_choice/on_block", 8),
     ExpectedCount::preset(
         MAINNET_PRESET,
         "fork_choice/on_execution_payload_envelope",
-        14,
+        15,
     ),
     ExpectedCount::preset(
         MAINNET_PRESET,
         "fork_choice/on_payload_attestation_message",
         7,
     ),
-    ExpectedCount::preset(MAINNET_PRESET, "operations/attestation", 57),
+    ExpectedCount::preset(MAINNET_PRESET, "fork_choice/payload_data_availability", 3),
+    ExpectedCount::preset(MAINNET_PRESET, "fork_choice/payload_timeliness", 3),
+    ExpectedCount::preset(MAINNET_PRESET, "operations/attestation", 56),
     ExpectedCount::preset(MAINNET_PRESET, "operations/attester_slashing", 30),
     ExpectedCount::preset(MAINNET_PRESET, "operations/block_header", 6),
     ExpectedCount::preset(MAINNET_PRESET, "operations/bls_to_execution_change", 14),
+    ExpectedCount::preset(MAINNET_PRESET, "operations/builder_deposit_request", 22),
+    ExpectedCount::preset(MAINNET_PRESET, "operations/builder_exit_request", 7),
     ExpectedCount::preset(MAINNET_PRESET, "operations/consolidation_request", 10),
-    ExpectedCount::preset(MAINNET_PRESET, "operations/deposit_request", 44),
-    ExpectedCount::preset(MAINNET_PRESET, "operations/execution_payload_bid", 18),
-    ExpectedCount::preset(MAINNET_PRESET, "operations/parent_execution_payload", 11),
+    ExpectedCount::preset(MAINNET_PRESET, "operations/deposit_request", 16),
+    ExpectedCount::preset(MAINNET_PRESET, "operations/execution_payload_bid", 19),
+    ExpectedCount::preset(MAINNET_PRESET, "operations/parent_execution_payload", 12),
     ExpectedCount::preset(MAINNET_PRESET, "operations/payload_attestation", 9),
-    ExpectedCount::preset(MAINNET_PRESET, "operations/proposer_slashing", 38),
+    ExpectedCount::preset(MAINNET_PRESET, "operations/proposer_slashing", 39),
     ExpectedCount::preset(MAINNET_PRESET, "operations/sync_aggregate", 26),
-    ExpectedCount::preset(MAINNET_PRESET, "operations/voluntary_exit", 31),
+    ExpectedCount::preset(MAINNET_PRESET, "operations/voluntary_exit", 26),
     ExpectedCount::preset(MAINNET_PRESET, "operations/voluntary_exit_churn", 1),
     ExpectedCount::preset(MAINNET_PRESET, "operations/withdrawal_request", 19),
-    ExpectedCount::preset(MAINNET_PRESET, "operations/withdrawals", 83),
+    ExpectedCount::preset(MAINNET_PRESET, "operations/withdrawals", 84),
     ExpectedCount::preset(MAINNET_PRESET, "random/random", 16),
     ExpectedCount::preset(MAINNET_PRESET, "sanity/blocks", 62),
     ExpectedCount::preset(MAINNET_PRESET, "sanity/slots", 17),
@@ -363,6 +367,8 @@ const MAINNET_RUNNABLE: &[ExpectedCount] = &[
     ExpectedCount::preset(MAINNET_PRESET, "ssz_static/BeaconBlockHeader", 5),
     ExpectedCount::preset(MAINNET_PRESET, "ssz_static/BeaconState", 5),
     ExpectedCount::preset(MAINNET_PRESET, "ssz_static/Builder", 5),
+    ExpectedCount::preset(MAINNET_PRESET, "ssz_static/BuilderDepositRequest", 5),
+    ExpectedCount::preset(MAINNET_PRESET, "ssz_static/BuilderExitRequest", 5),
     ExpectedCount::preset(MAINNET_PRESET, "ssz_static/BuilderPendingPayment", 5),
     ExpectedCount::preset(MAINNET_PRESET, "ssz_static/BuilderPendingWithdrawal", 5),
     ExpectedCount::preset(MAINNET_PRESET, "ssz_static/Checkpoint", 5),
@@ -434,15 +440,15 @@ const GENERAL_SKIPPED: &[ExpectedSkip] = &[
     ),
     ExpectedSkip::general(
         "deneb",
-        "kzg/verify_blob_kzg_proof_batch",
-        SkipReason::UnsupportedRunner,
-        24,
-    ),
-    ExpectedSkip::general(
-        "deneb",
         "kzg/verify_blob_kzg_proof",
         SkipReason::UnsupportedRunner,
         29,
+    ),
+    ExpectedSkip::general(
+        "deneb",
+        "kzg/verify_blob_kzg_proof_batch",
+        SkipReason::UnsupportedRunner,
+        24,
     ),
     ExpectedSkip::general(
         "deneb",
@@ -452,13 +458,13 @@ const GENERAL_SKIPPED: &[ExpectedSkip] = &[
     ),
     ExpectedSkip::general(
         "fulu",
-        "kzg/compute_cells_and_kzg_proofs",
+        "kzg/compute_cells",
         SkipReason::UnsupportedRunner,
         11,
     ),
     ExpectedSkip::general(
         "fulu",
-        "kzg/compute_cells",
+        "kzg/compute_cells_and_kzg_proofs",
         SkipReason::UnsupportedRunner,
         11,
     ),
@@ -547,7 +553,7 @@ const MAINNET_SKIPPED: &[ExpectedSkip] = &[
         MAINNET_PRESET,
         "fork/fork",
         SkipReason::UnsupportedRunner,
-        30,
+        31,
     ),
     ExpectedSkip::preset(
         MAINNET_PRESET,
@@ -818,7 +824,7 @@ const MINIMAL_RUNNABLE: &[ExpectedCount] = &[
         "epoch_processing/pending_consolidations",
         13,
     ),
-    ExpectedCount::preset(MINIMAL_PRESET, "epoch_processing/pending_deposits", 42),
+    ExpectedCount::preset(MINIMAL_PRESET, "epoch_processing/pending_deposits", 43),
     ExpectedCount::preset(MINIMAL_PRESET, "epoch_processing/pending_deposits_churn", 4),
     ExpectedCount::preset(MINIMAL_PRESET, "epoch_processing/proposer_lookahead", 4),
     ExpectedCount::preset(MINIMAL_PRESET, "epoch_processing/ptc_window", 1),
@@ -831,37 +837,41 @@ const MINIMAL_RUNNABLE: &[ExpectedCount] = &[
     ExpectedCount::preset(MINIMAL_PRESET, "finality/finality", 5),
     ExpectedCount::preset(MINIMAL_PRESET, "fork_choice/deposit_with_reorg", 1),
     ExpectedCount::preset(MINIMAL_PRESET, "fork_choice/ex_ante", 3),
-    ExpectedCount::preset(MINIMAL_PRESET, "fork_choice/get_head", 9),
+    ExpectedCount::preset(MINIMAL_PRESET, "fork_choice/get_head", 11),
     ExpectedCount::preset(MINIMAL_PRESET, "fork_choice/get_parent_payload_status", 1),
     ExpectedCount::preset(MINIMAL_PRESET, "fork_choice/on_attestation", 5),
-    ExpectedCount::preset(MINIMAL_PRESET, "fork_choice/on_block", 23),
+    ExpectedCount::preset(MINIMAL_PRESET, "fork_choice/on_block", 25),
     ExpectedCount::preset(
         MINIMAL_PRESET,
         "fork_choice/on_execution_payload_envelope",
-        14,
+        15,
     ),
     ExpectedCount::preset(
         MINIMAL_PRESET,
         "fork_choice/on_payload_attestation_message",
         7,
     ),
+    ExpectedCount::preset(MINIMAL_PRESET, "fork_choice/payload_data_availability", 3),
+    ExpectedCount::preset(MINIMAL_PRESET, "fork_choice/payload_timeliness", 3),
     ExpectedCount::preset(MINIMAL_PRESET, "fork_choice/reorg", 8),
     ExpectedCount::preset(MINIMAL_PRESET, "fork_choice/withholding", 2),
-    ExpectedCount::preset(MINIMAL_PRESET, "operations/attestation", 61),
+    ExpectedCount::preset(MINIMAL_PRESET, "operations/attestation", 60),
     ExpectedCount::preset(MINIMAL_PRESET, "operations/attester_slashing", 30),
     ExpectedCount::preset(MINIMAL_PRESET, "operations/block_header", 6),
     ExpectedCount::preset(MINIMAL_PRESET, "operations/bls_to_execution_change", 14),
+    ExpectedCount::preset(MINIMAL_PRESET, "operations/builder_deposit_request", 22),
+    ExpectedCount::preset(MINIMAL_PRESET, "operations/builder_exit_request", 7),
     ExpectedCount::preset(MINIMAL_PRESET, "operations/consolidation_request", 37),
-    ExpectedCount::preset(MINIMAL_PRESET, "operations/deposit_request", 44),
-    ExpectedCount::preset(MINIMAL_PRESET, "operations/execution_payload_bid", 18),
-    ExpectedCount::preset(MINIMAL_PRESET, "operations/parent_execution_payload", 11),
+    ExpectedCount::preset(MINIMAL_PRESET, "operations/deposit_request", 16),
+    ExpectedCount::preset(MINIMAL_PRESET, "operations/execution_payload_bid", 19),
+    ExpectedCount::preset(MINIMAL_PRESET, "operations/parent_execution_payload", 12),
     ExpectedCount::preset(MINIMAL_PRESET, "operations/payload_attestation", 11),
-    ExpectedCount::preset(MINIMAL_PRESET, "operations/proposer_slashing", 38),
+    ExpectedCount::preset(MINIMAL_PRESET, "operations/proposer_slashing", 39),
     ExpectedCount::preset(MINIMAL_PRESET, "operations/sync_aggregate", 24),
-    ExpectedCount::preset(MINIMAL_PRESET, "operations/voluntary_exit", 27),
+    ExpectedCount::preset(MINIMAL_PRESET, "operations/voluntary_exit", 22),
     ExpectedCount::preset(MINIMAL_PRESET, "operations/voluntary_exit_churn", 3),
     ExpectedCount::preset(MINIMAL_PRESET, "operations/withdrawal_request", 29),
-    ExpectedCount::preset(MINIMAL_PRESET, "operations/withdrawals", 84),
+    ExpectedCount::preset(MINIMAL_PRESET, "operations/withdrawals", 85),
     ExpectedCount::preset(MINIMAL_PRESET, "random/random", 16),
     ExpectedCount::preset(MINIMAL_PRESET, "sanity/blocks", 77),
     ExpectedCount::preset(MINIMAL_PRESET, "sanity/slots", 17),
@@ -874,6 +884,8 @@ const MINIMAL_RUNNABLE: &[ExpectedCount] = &[
     ExpectedCount::preset(MINIMAL_PRESET, "ssz_static/BeaconBlockHeader", 123),
     ExpectedCount::preset(MINIMAL_PRESET, "ssz_static/BeaconState", 123),
     ExpectedCount::preset(MINIMAL_PRESET, "ssz_static/Builder", 123),
+    ExpectedCount::preset(MINIMAL_PRESET, "ssz_static/BuilderDepositRequest", 123),
+    ExpectedCount::preset(MINIMAL_PRESET, "ssz_static/BuilderExitRequest", 123),
     ExpectedCount::preset(MINIMAL_PRESET, "ssz_static/BuilderPendingPayment", 123),
     ExpectedCount::preset(MINIMAL_PRESET, "ssz_static/BuilderPendingWithdrawal", 123),
     ExpectedCount::preset(MINIMAL_PRESET, "ssz_static/Checkpoint", 123),
@@ -921,9 +933,69 @@ const MINIMAL_RUNNABLE: &[ExpectedCount] = &[
 const MINIMAL_SKIPPED: &[ExpectedSkip] = &[
     ExpectedSkip::preset(
         MINIMAL_PRESET,
+        "fast_confirmation/basic",
+        SkipReason::UnsupportedRunner,
+        1,
+    ),
+    ExpectedSkip::preset(
+        MINIMAL_PRESET,
+        "fast_confirmation/current_epoch",
+        SkipReason::UnsupportedRunner,
+        22,
+    ),
+    ExpectedSkip::preset(
+        MINIMAL_PRESET,
+        "fast_confirmation/empty_slots",
+        SkipReason::UnsupportedRunner,
+        5,
+    ),
+    ExpectedSkip::preset(
+        MINIMAL_PRESET,
+        "fast_confirmation/ffg",
+        SkipReason::UnsupportedRunner,
+        2,
+    ),
+    ExpectedSkip::preset(
+        MINIMAL_PRESET,
+        "fast_confirmation/is_one_confirmed",
+        SkipReason::UnsupportedRunner,
+        10,
+    ),
+    ExpectedSkip::preset(
+        MINIMAL_PRESET,
+        "fast_confirmation/previous_epoch",
+        SkipReason::UnsupportedRunner,
+        108,
+    ),
+    ExpectedSkip::preset(
+        MINIMAL_PRESET,
+        "fast_confirmation/reconfirmation",
+        SkipReason::UnsupportedRunner,
+        2,
+    ),
+    ExpectedSkip::preset(
+        MINIMAL_PRESET,
+        "fast_confirmation/restart_gu",
+        SkipReason::UnsupportedRunner,
+        5,
+    ),
+    ExpectedSkip::preset(
+        MINIMAL_PRESET,
+        "fast_confirmation/revert_finality",
+        SkipReason::UnsupportedRunner,
+        8,
+    ),
+    ExpectedSkip::preset(
+        MINIMAL_PRESET,
+        "fast_confirmation/variables",
+        SkipReason::UnsupportedRunner,
+        7,
+    ),
+    ExpectedSkip::preset(
+        MINIMAL_PRESET,
         "fork/fork",
         SkipReason::UnsupportedRunner,
-        32,
+        33,
     ),
     ExpectedSkip::preset(
         MINIMAL_PRESET,
@@ -1183,6 +1255,97 @@ const MINIMAL_SKIPPED: &[ExpectedSkip] = &[
 mod tests {
     use super::*;
 
+    fn split_inventory_path(path: &str) -> (Option<&'static str>, String, String) {
+        let segs: Vec<&str> = path.splitn(3, '/').collect();
+        let config = segs[0];
+        let fork = segs.get(1).copied().unwrap_or("").to_owned();
+        let tail = segs.get(2).copied().unwrap_or("").to_owned();
+        match config {
+            "general" => (None, fork, tail),
+            "minimal" => (Some("MINIMAL_PRESET"), fork, tail),
+            "mainnet" => (Some("MAINNET_PRESET"), fork, tail),
+            other => panic!("unexpected config {other}"),
+        }
+    }
+
+    fn emit_skip_reason(reason: SkipReason) -> &'static str {
+        match reason {
+            SkipReason::UnsupportedRunner => "SkipReason::UnsupportedRunner",
+            SkipReason::UnsupportedHandler => "SkipReason::UnsupportedHandler",
+            SkipReason::CaseMetadata(MetadataSkipReason::BlsDisabledExecution) => {
+                "SkipReason::CaseMetadata(MetadataSkipReason::BlsDisabledExecution)"
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "regenerates the pinned inventory source; run manually after a tag bump"]
+    fn emit_inventory_source() {
+        for (label, fixtures, preset) in [
+            (
+                "MINIMAL",
+                crate::vectors::FixtureSet::Minimal,
+                Some(MINIMAL_PRESET),
+            ),
+            (
+                "MAINNET",
+                crate::vectors::FixtureSet::Mainnet,
+                Some(MAINNET_PRESET),
+            ),
+            ("GENERAL", crate::vectors::FixtureSet::General, None),
+        ] {
+            let dir = crate::vectors::tag_dir(fixtures).expect("tag dir");
+            let discovery = match preset {
+                Some(preset) => {
+                    crate::inventory::discover::preset_discovery(&dir, preset, TARGET_FORK)
+                        .expect("preset discovery")
+                }
+                None => crate::inventory::discover::general_discovery(&dir).expect("general"),
+            };
+
+            let runnable = runnable_counts(&discovery);
+            println!("=== {label}_RUNNABLE ===");
+            for (path, count) in &runnable {
+                let (preset, fork, tail) = split_inventory_path(path);
+                match preset {
+                    Some(p) => {
+                        println!("    ExpectedCount::preset({p}, \"{tail}\", {count}),");
+                    }
+                    None => {
+                        println!("    ExpectedCount::general(\"{fork}\", \"{tail}\", {count}),");
+                    }
+                }
+            }
+
+            let mut skipped: BTreeMap<(String, SkipReason), usize> = BTreeMap::new();
+            for fixture in &discovery.skipped {
+                *skipped
+                    .entry((fixture.display_path(), fixture.reason()))
+                    .or_default() += fixture.cases();
+            }
+            println!("=== {label}_SKIPPED ===");
+            for ((path, reason), count) in &skipped {
+                let (preset, fork, tail) = split_inventory_path(path);
+                let r = emit_skip_reason(*reason);
+                match preset {
+                    Some(p) => {
+                        println!("    ExpectedSkip::preset({p}, \"{tail}\", {r}, {count}),");
+                    }
+                    None => {
+                        println!(
+                            "    ExpectedSkip::general(\"{fork}\", \"{tail}\", {r}, {count}),"
+                        );
+                    }
+                }
+            }
+            println!(
+                "=== {label}_SUMS runnable={} skipped={} ===",
+                runnable.values().sum::<usize>(),
+                skipped.values().sum::<usize>()
+            );
+        }
+    }
+
     fn preset_key(preset: &'static str, tail: &'static str) -> String {
         ExpectedPath::preset(preset, tail).key()
     }
@@ -1201,8 +1364,8 @@ mod tests {
         let runnable = expected_count_map(CoverageLane::Minimal.runnable_inventory());
         let skipped = expected_skip_map(CoverageLane::Minimal.skipped_inventory());
 
-        assert_eq!(runnable.values().sum::<usize>(), 6_575);
-        assert_eq!(skipped.values().sum::<usize>(), 3_012);
+        assert_eq!(runnable.values().sum::<usize>(), 6_832);
+        assert_eq!(skipped.values().sum::<usize>(), 3_183);
         assert!(!runnable.keys().any(|family| family.contains("/bls/")));
         assert_eq!(
             runnable.get(&preset_key(
@@ -1255,8 +1418,8 @@ mod tests {
         let runnable = expected_count_map(CoverageLane::Mainnet.runnable_inventory());
         let skipped = expected_skip_map(CoverageLane::Mainnet.skipped_inventory());
 
-        assert_eq!(runnable.values().sum::<usize>(), 925);
-        assert_eq!(skipped.values().sum::<usize>(), 286);
+        assert_eq!(runnable.values().sum::<usize>(), 946);
+        assert_eq!(skipped.values().sum::<usize>(), 287);
         assert!(!runnable.contains_key(&preset_key(
             MAINNET_PRESET,
             "fork_choice/deposit_with_reorg"

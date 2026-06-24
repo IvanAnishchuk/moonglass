@@ -5,13 +5,12 @@
 //! harness owns only fixture decoding and assertion formatting.
 
 use moonglass::containers::Checkpoint;
-use moonglass::fork_choice::{
-    PayloadStatus, Store, diagnostics::get_viable_for_head_nodes, get_head,
-};
+use moonglass::fork_choice::{PayloadStatus, Store, diagnostics::get_viable_for_head_nodes};
 use moonglass::primitives::{Epoch, Root};
 
 use super::steps::{
-    CheckpointHex, Checks, HeadCheck, PayloadStatusCode, PayloadVoteCheck, ViableForHeadCheck,
+    CheckpointHex, Checks, HeadCheck, PayloadStatusCode, PayloadVoteCheck, ProposerHeadCheck,
+    ViableForHeadCheck,
 };
 use crate::adapters::{trace_enabled, trace_step_check_fail, trace_step_check_pass};
 use crate::fixtures::{decode_fixed_hex, encode_hex};
@@ -151,6 +150,51 @@ pub(super) fn assert_checks(
             check,
         )?;
     }
+    if let Some(want) = &checks.get_proposer_head {
+        check_get_proposer_head(trace, store, want)?;
+    }
+    Ok(())
+}
+
+fn check_get_proposer_head(
+    trace: CheckTrace<'_>,
+    store: &Store,
+    want: &ProposerHeadCheck,
+) -> Result<(), String> {
+    let want_root = parse_root(trace, "get_proposer_head", &want.root)?;
+    let head = match store.get_head() {
+        Ok(head) => head,
+        Err(e) => return trace.fail("get_proposer_head", format!("get_head: {e}")),
+    };
+    let node = match store.get_proposer_head(head, store.get_current_slot()) {
+        Ok(node) => node,
+        Err(e) => return trace.fail("get_proposer_head", format!("get_proposer_head: {e}")),
+    };
+    if node.root != want_root {
+        return trace.fail(
+            "get_proposer_head",
+            format!(
+                "get_proposer_head mismatch: got {} want {}",
+                root_hex(&node.root),
+                root_hex(&want_root)
+            ),
+        );
+    }
+    // The result is a complete ForkChoiceNode, so the fixture carries the expected
+    // payload status alongside the root and both must match.
+    let got_status = payload_status_code(node.payload_status);
+    if got_status != want.payload_status {
+        return trace.fail(
+            "get_proposer_head",
+            format!(
+                "get_proposer_head payload_status mismatch: got {got_status:?} want {:?}",
+                want.payload_status
+            ),
+        );
+    }
+    trace.pass("get_proposer_head", || {
+        format!("got {} status {got_status:?}", root_hex(&node.root))
+    });
     Ok(())
 }
 
@@ -200,7 +244,7 @@ fn check_payload_votes(
 }
 
 fn check_head(trace: CheckTrace<'_>, store: &Store, head_check: &HeadCheck) -> Result<(), String> {
-    let head = match get_head(store) {
+    let head = match store.get_head() {
         Ok(head) => {
             trace.pass("head.get_head", || format!("root {}", root_hex(&head.root)));
             head

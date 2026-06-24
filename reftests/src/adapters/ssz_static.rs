@@ -11,16 +11,16 @@ use thiserror::Error;
 
 use moonglass::containers::{
     Attestation, AttestationData, AttesterSlashing, BLSToExecutionChange, BeaconBlock,
-    BeaconBlockBody, BeaconBlockHeader, BeaconState, Builder, BuilderPendingPayment,
-    BuilderPendingWithdrawal, Checkpoint, ConsolidationRequest, Deposit, DepositData,
-    DepositRequest, Eth1Data, ExecutionPayload, ExecutionPayloadBid, ExecutionPayloadEnvelope,
-    ExecutionRequests, Fork, ForkData, HistoricalSummary, IndexedAttestation,
-    IndexedPayloadAttestation, PayloadAttestation, PayloadAttestationData,
-    PayloadAttestationMessage, PendingConsolidation, PendingDeposit, PendingPartialWithdrawal,
-    ProposerSlashing, SignedBLSToExecutionChange, SignedBeaconBlock, SignedBeaconBlockHeader,
-    SignedExecutionPayloadBid, SignedExecutionPayloadEnvelope, SignedVoluntaryExit, SigningData,
-    SingleAttestation, SyncAggregate, SyncCommittee, Validator, VoluntaryExit, Withdrawal,
-    WithdrawalRequest,
+    BeaconBlockBody, BeaconBlockHeader, BeaconState, Builder, BuilderDepositRequest,
+    BuilderExitRequest, BuilderPendingPayment, BuilderPendingWithdrawal, Checkpoint,
+    ConsolidationRequest, Deposit, DepositData, DepositRequest, Eth1Data, ExecutionPayload,
+    ExecutionPayloadBid, ExecutionPayloadEnvelope, ExecutionRequests, Fork, ForkData,
+    HistoricalSummary, IndexedAttestation, IndexedPayloadAttestation, PayloadAttestation,
+    PayloadAttestationData, PayloadAttestationMessage, PendingConsolidation, PendingDeposit,
+    PendingPartialWithdrawal, ProposerSlashing, SignedBLSToExecutionChange, SignedBeaconBlock,
+    SignedBeaconBlockHeader, SignedExecutionPayloadBid, SignedExecutionPayloadEnvelope,
+    SignedVoluntaryExit, SigningData, SingleAttestation, SyncAggregate, SyncCommittee, Validator,
+    VoluntaryExit, Withdrawal, WithdrawalRequest,
 };
 use moonglass::primitives::Root;
 
@@ -93,6 +93,8 @@ impl SupportedHandler for StaticContainer {
         Self::new("BeaconState", run_one::<BeaconState>),
         Self::new("BLSToExecutionChange", run_one::<BLSToExecutionChange>),
         Self::new("Builder", run_one::<Builder>),
+        Self::new("BuilderDepositRequest", run_one::<BuilderDepositRequest>),
+        Self::new("BuilderExitRequest", run_one::<BuilderExitRequest>),
         Self::new("BuilderPendingPayment", run_one::<BuilderPendingPayment>),
         Self::new(
             "BuilderPendingWithdrawal",

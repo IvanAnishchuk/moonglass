@@ -155,6 +155,19 @@ pub(super) struct BlockStep {
     pub block: FixtureStem,
     #[serde(default = "yes")]
     pub valid: bool,
+    // Optional data-availability inputs in the fixture format: `blobs`/`proofs`
+    // (blob commitments) and `columns` (data columns). Data availability
+    // is mocked in this harness, so these are accepted to satisfy
+    // `deny_unknown_fields` and then ignored.
+    #[serde(default)]
+    #[allow(dead_code)]
+    blobs: Option<serde_yaml::Value>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    proofs: Option<serde_yaml::Value>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    columns: Option<serde_yaml::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -204,7 +217,7 @@ pub(super) struct Checks {
     pub time: Option<u64>,
     /// Expected `store.genesis_time`.
     pub genesis_time: Option<u64>,
-    /// Expected `get_head(store)` result.
+    /// Expected `Store::get_head` result.
     pub head: Option<HeadCheck>,
     /// Expected `store.justified_checkpoint`.
     pub justified_checkpoint: Option<CheckpointHex>,
@@ -218,6 +231,8 @@ pub(super) struct Checks {
     pub payload_timeliness_vote: Option<PayloadVoteCheck>,
     /// Expected PTC data-availability vote vector for one block root.
     pub payload_data_availability_vote: Option<PayloadVoteCheck>,
+    /// Expected `Store::get_proposer_head` returned node.
+    pub get_proposer_head: Option<ProposerHeadCheck>,
 }
 
 impl<'de> Deserialize<'de> for Checks {
@@ -237,6 +252,7 @@ impl<'de> Deserialize<'de> for Checks {
             viable_for_head_roots_and_weights: Option<Vec<ViableForHeadCheck>>,
             payload_timeliness_vote: Option<PayloadVoteCheck>,
             payload_data_availability_vote: Option<PayloadVoteCheck>,
+            get_proposer_head: Option<ProposerHeadCheck>,
         }
 
         let wire = Wire::deserialize(deserializer)?;
@@ -250,6 +266,7 @@ impl<'de> Deserialize<'de> for Checks {
             viable_for_head_roots_and_weights: wire.viable_for_head_roots_and_weights,
             payload_timeliness_vote: wire.payload_timeliness_vote,
             payload_data_availability_vote: wire.payload_data_availability_vote,
+            get_proposer_head: wire.get_proposer_head,
         };
         if checks.is_empty() {
             return Err(de::Error::custom(
@@ -290,6 +307,9 @@ impl Checks {
         if self.payload_data_availability_vote.is_some() {
             labels.push("payload_data_availability_vote");
         }
+        if self.get_proposer_head.is_some() {
+            labels.push("get_proposer_head");
+        }
         labels
     }
 
@@ -303,6 +323,7 @@ impl Checks {
             && self.viable_for_head_roots_and_weights.is_none()
             && self.payload_timeliness_vote.is_none()
             && self.payload_data_availability_vote.is_none()
+            && self.get_proposer_head.is_none()
     }
 }
 
@@ -334,6 +355,13 @@ pub(super) struct PayloadVoteCheck {
 pub(super) struct ViableForHeadCheck {
     pub root: String,
     pub weight: u64,
+    pub payload_status: PayloadStatusCode,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ProposerHeadCheck {
+    pub root: String,
     pub payload_status: PayloadStatusCode,
 }
 
@@ -396,7 +424,7 @@ mod tests {
         assert_eq!(head.slot, 0);
         assert_eq!(
             head.root,
-            "0x2169c7883298538418a14e0df8bdd05c939b7fdcba1d5bf21820fc7701c4a382"
+            "0x2a9cb69f4de117f55f3cd886f2765427572b62e31666bd9ba53d19a69e148418"
         );
         assert_eq!(
             head.payload_status.map(super::PayloadStatusCode::as_u8),

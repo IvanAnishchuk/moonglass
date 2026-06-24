@@ -85,14 +85,14 @@ pub struct BeaconBlockBody {
     /// Builder bid the proposer committed to for this slot.
     ///
     /// Accepted by [`BeaconState::process_execution_payload_bid`](crate::containers::BeaconState::process_execution_payload_bid), then matched
-    /// by [`BeaconState::process_execution_payload`](crate::containers::BeaconState::process_execution_payload) when the matching payload
-    /// envelope is delivered for this block.
+    /// by [`BeaconState::verify_execution_payload_envelope`](crate::containers::BeaconState::verify_execution_payload_envelope) when the matching
+    /// payload envelope is delivered for this block.
     pub signed_execution_payload_bid: SignedExecutionPayloadBid,
     /// Payload-timeliness committee votes for the parent slot's payload.
     ///
     /// The state transition validates these with
     /// [`BeaconState::process_payload_attestation`](crate::containers::BeaconState::process_payload_attestation). Fork choice replays the
-    /// aggregate through [`crate::fork_choice::on_block`], expanding participants
+    /// aggregate through [`crate::fork_choice::Store::on_block()`], expanding participants
     /// before writing local PTC vote evidence for the attested parent root.
     pub payload_attestations: List<PayloadAttestation, MAX_PAYLOAD_ATTESTATIONS>,
     /// Execution-to-consensus requests from the parent slot's payload.
@@ -107,7 +107,7 @@ pub struct BeaconBlockBody {
 /// operations.
 /// In state transition this is applied by
 /// [`crate::containers::BeaconState::apply_signed_block`]. In fork choice it is
-/// accepted by [`crate::fork_choice::on_block`] and stored in
+/// accepted by [`crate::fork_choice::Store::on_block()`] and stored in
 /// [`crate::fork_choice::Store::blocks`].
 #[derive(Default, Debug, Clone, PartialEq, Eq, SimpleSerialize)]
 pub struct BeaconBlock {
@@ -143,7 +143,7 @@ impl BeaconBlock {
 /// [`crate::containers::BeaconState::apply_signed_block`] advances slots,
 /// checks the proposer signature, processes the block, and verifies the claimed
 /// post-state root. Fork choice passes the same object to
-/// [`crate::fork_choice::on_block`] before caching the resulting post-state.
+/// [`crate::fork_choice::Store::on_block()`] before caching the resulting post-state.
 #[derive(Default, Debug, Clone, PartialEq, Eq, SimpleSerialize)]
 pub struct SignedBeaconBlock {
     /// The block being signed.

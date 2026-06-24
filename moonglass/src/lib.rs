@@ -28,7 +28,8 @@
 //!
 //! - Block acceptance:
 //!   start at [`containers::SignedBeaconBlock`], then inspect
-//!   [`containers::BeaconState::apply_signed_block`] and [`fork_choice::on_block`].
+//!   [`containers::BeaconState::apply_signed_block`] and
+//!   [`fork_choice::Store::on_block()`].
 //!   Watch the state transition mutate a cloned
 //!   [`BeaconState`](containers::BeaconState) while fork choice caches the
 //!   post-state in [`fork_choice::Store`]. Fixtures:
@@ -41,7 +42,7 @@
 //!   `operations/execution_payload_bid`.
 //! - Delivered payload evidence:
 //!   start at [`containers::SignedExecutionPayloadEnvelope`], then inspect
-//!   [`fork_choice::on_execution_payload_envelope`] and
+//!   [`fork_choice::Store::on_execution_payload_envelope()`] and
 //!   [`fork_choice::Store::payloads`]. The envelope passed the implemented
 //!   consensus-side checks, not full execution-engine or blob-availability
 //!   verification. Fixture: `fork_choice/on_execution_payload_envelope`.
@@ -56,21 +57,21 @@
 //!   start at [`containers::PayloadAttestation`] and
 //!   [`containers::PayloadAttestationMessage`], then inspect
 //!   [`containers::BeaconState::process_payload_attestation`] and
-//!   [`fork_choice::on_payload_attestation_message`]. Block aggregates and
-//!   gossip messages are admitted differently, but the store records local PTC
-//!   vote evidence by position. Fixtures: `operations/payload_attestation`,
+//!   [`fork_choice::Store::on_payload_attestation_message()`]. Block aggregates
+//!   and gossip messages are admitted differently, but the store records local
+//!   PTC vote evidence by position. Fixtures: `operations/payload_attestation`,
 //!   `fork_choice/on_payload_attestation_message`.
 //! - Beacon attestation branch choice:
 //!   start at [`containers::Attestation`], then inspect
 //!   [`containers::BeaconState::process_attestation`] and
-//!   [`fork_choice::on_attestation`]. Votes for a block at `data.slot` stay
-//!   pending. Votes for an older head use `AttestationData::index` as the payload
-//!   empty/full selector. Fixtures: `operations/attestation`,
+//!   [`fork_choice::Store::on_attestation()`]. Votes for a block at `data.slot`
+//!   stay pending. Votes for an older head use `AttestationData::index` as the
+//!   payload empty/full selector. Fixtures: `operations/attestation`,
 //!   `fork_choice/on_attestation`.
 //! - Head selection:
 //!   start at [`fork_choice::ForkChoiceNode`], then inspect
-//!   [`fork_choice::get_head`]. Fork choice returns both a block root and a
-//!   [`fork_choice::PayloadStatus`]. Fixture: `fork_choice/get_head`.
+//!   [`fork_choice::Store::get_head`]. Fork choice returns both a block root and
+//!   a [`fork_choice::PayloadStatus`]. Fixture: `fork_choice/get_head`.
 //!
 //! Use [`state_transition`] to follow a block through the rulebook, then use
 //! [`containers`] for the data being moved, [`primitives`] and [`constants`] for
@@ -113,12 +114,14 @@
 //!   a set of positions in the aggregate.
 //! - A beacon attestation's `index` is a payload-branch selector only when
 //!   the voted block is older than `attestation.data.slot`. If the voted block is
-//!   at `data.slot`, the vote must use the empty/pending form. In state
-//!   transition, historical votes are checked against the `BeaconState`
-//!   payload-availability bit. In fork choice, older full-branch votes are
-//!   checked against the local [`fork_choice::Store::payloads`] map of recorded
-//!   envelopes. Keep those two legality checks separate: one is durable
-//!   consensus state, the other is node-local evidence.
+//!   at `data.slot`, the vote must use the empty/pending form. The two rulebooks
+//!   then read that selector differently. In state transition, a historical
+//!   vote's `index` is matched against the `BeaconState` payload-availability bit
+//!   to decide whether the vote earns its head flag, not whether the vote is
+//!   accepted. In fork choice, an older full-branch vote is admitted only once the
+//!   local [`fork_choice::Store::payloads`] map holds the recorded envelope. One
+//!   shapes a head-flag reward from durable consensus state, the other is a
+//!   node-local admission gate.
 //! - A child block applies the parent payload's effects before its own bid. It
 //!   settles the parent block's promised payload first, then records its own
 //!   commitment for a later child to prove.
@@ -148,5 +151,6 @@ pub mod containers;
 pub mod crypto;
 pub mod error;
 pub mod fork_choice;
+pub mod glossary;
 pub mod primitives;
 pub mod state_transition;

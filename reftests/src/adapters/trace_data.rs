@@ -2,10 +2,10 @@
 
 use moonglass::containers::{
     Attestation, AttestationData, AttesterSlashing, BeaconBlock, BeaconBlockHeader,
-    ConsolidationRequest, DepositRequest, ExecutionRequests, PayloadAttestation,
-    PayloadAttestationData, PayloadAttestationMessage, ProposerSlashing,
-    SignedBLSToExecutionChange, SignedBeaconBlock, SignedExecutionPayloadEnvelope,
-    SignedVoluntaryExit, SyncAggregate, WithdrawalRequest,
+    BuilderDepositRequest, BuilderExitRequest, ConsolidationRequest, DepositRequest,
+    ExecutionRequests, PayloadAttestation, PayloadAttestationData, PayloadAttestationMessage,
+    ProposerSlashing, SignedBLSToExecutionChange, SignedBeaconBlock, SignedExecutionPayloadBid,
+    SignedExecutionPayloadEnvelope, SignedVoluntaryExit, SyncAggregate, WithdrawalRequest,
 };
 use moonglass::primitives::{BLSPubkey, ExecutionAddress, Hash32, Root};
 
@@ -115,6 +115,23 @@ impl TraceData for PayloadAttestationMessage {
     }
 }
 
+impl TraceData for SignedExecutionPayloadBid {
+    fn trace_data(&self) -> String {
+        let bid = &self.message;
+        format!(
+            "slot={} builder={} value={} parent_block_root={} parent_block_hash={} block_hash={} blobs={} requests_root={}",
+            bid.slot.as_u64(),
+            bid.builder_index.as_u64(),
+            bid.value.as_u64(),
+            root_hex(&bid.parent_block_root),
+            hash32_hex(&bid.parent_block_hash),
+            hash32_hex(&bid.block_hash),
+            bid.blob_kzg_commitments.len(),
+            root_hex(&bid.execution_requests_root)
+        )
+    }
+}
+
 impl TraceData for SignedExecutionPayloadEnvelope {
     fn trace_data(&self) -> String {
         let message = &self.message;
@@ -148,6 +165,26 @@ impl TraceData for DepositRequest {
             self.index,
             self.amount.as_u64(),
             pubkey_hex(&self.pubkey)
+        )
+    }
+}
+
+impl TraceData for BuilderDepositRequest {
+    fn trace_data(&self) -> String {
+        format!(
+            "amount={} pubkey={}",
+            self.amount.as_u64(),
+            pubkey_hex(&self.pubkey)
+        )
+    }
+}
+
+impl TraceData for BuilderExitRequest {
+    fn trace_data(&self) -> String {
+        format!(
+            "pubkey={} source_address={}",
+            pubkey_hex(&self.pubkey),
+            address_hex(&self.source_address)
         )
     }
 }

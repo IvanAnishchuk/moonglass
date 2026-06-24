@@ -6,11 +6,7 @@ use moonglass::containers::{
     Attestation, AttesterSlashing, BeaconBlock, BeaconState, PayloadAttestationMessage,
     SignedBeaconBlock, SignedExecutionPayloadEnvelope,
 };
-use moonglass::fork_choice::{
-    Store, get_forkchoice_store, on_attestation, on_attester_slashing,
-    on_block_with_embedded_messages, on_execution_payload_envelope, on_payload_attestation_message,
-    on_tick,
-};
+use moonglass::fork_choice::{Store, get_forkchoice_store};
 
 use super::checks::{StepContext, assert_checks};
 use super::steps::{Step, parse_steps};
@@ -98,6 +94,12 @@ pub(super) fn run_case(case: &Case) -> Outcome {
                 return Outcome::Fail(format!("step {idx} [{tag}]: {msg}"));
             }
         }
+        // Every accepted step must leave the store structurally well formed.
+        if let Err(violation) = store.check_invariants() {
+            return Outcome::Fail(format!(
+                "step {idx} [{tag}] left store invariant broken: {violation}"
+            ));
+        }
     }
     Outcome::Pass
 }
@@ -128,9 +130,9 @@ fn step_detail(step: &Step) -> String {
     }
 }
 
-// `Ok(None)` means the step did its job with nothing to report; `Ok(Some(msg))`
+// `Ok(None)` means the step did its job with nothing to report. `Ok(Some(msg))`
 // means the step passed because something was correctly rejected and `msg`
-// records why; `Err(msg)` is a case failure.
+// records why. `Err(msg)` is a case failure.
 fn drive_step(
     store: &mut Store,
     files: CaseFiles<'_>,
@@ -139,7 +141,7 @@ fn drive_step(
     tag: &str,
 ) -> Result<Option<String>, StepFailure> {
     match step {
-        Step::Tick(s) => expect_step_result(on_tick(store, s.tick), s.valid, "tick"),
+        Step::Tick(s) => expect_step_result(store.on_tick(s.tick), s.valid, "tick"),
         Step::Block(s) => apply_block(store, files, &s.block, s.valid, index, tag),
         Step::Attestation(s) => apply::<Attestation, _>(
             store,
@@ -148,7 +150,7 @@ fn drive_step(
             s.valid,
             index,
             tag,
-            |store, att| on_attestation(store, att, false),
+            |store, att| store.on_attestation(att, false),
         ),
         Step::AttesterSlashing(s) => apply::<AttesterSlashing, _>(
             store,
@@ -157,7 +159,7 @@ fn drive_step(
             s.valid,
             index,
             tag,
-            on_attester_slashing,
+            Store::on_attester_slashing,
         ),
         Step::PayloadEnvelope(s) => apply::<SignedExecutionPayloadEnvelope, _>(
             store,
@@ -166,7 +168,7 @@ fn drive_step(
             s.valid,
             index,
             tag,
-            on_execution_payload_envelope,
+            Store::on_execution_payload_envelope,
         ),
         Step::PayloadAttestation(s) => apply::<PayloadAttestationMessage, _>(
             store,
@@ -175,7 +177,7 @@ fn drive_step(
             s.valid,
             index,
             tag,
-            |store, msg| on_payload_attestation_message(store, msg, false),
+            |store, msg| store.on_payload_attestation_message(msg, false),
         ),
         Step::Checks(s) => assert_checks(store, &s.checks, StepContext::new(index, tag))
             .map(|()| None)
@@ -301,7 +303,7 @@ fn apply_block(
         trace_step_pass_item(index, tag, "input", signed.trace_data());
     }
     expect_step_result(
-        on_block_with_embedded_messages(store, &signed),
+        store.on_block_with_embedded_messages(&signed),
         expect_valid,
         file_stem.as_str(),
     )

@@ -1,44 +1,52 @@
-//! Fork-choice handling for attester slashing evidence.
+//! Taking in proof that a [validator](crate::glossary#validator)
+//! [equivocated](crate::glossary#equivocation).
 //!
-//! This handler does not apply consensus slashing penalties. It validates the
-//! evidence against fork-choice state and records overlapping validators in the
-//! local `equivocating_indices` set so their latest-message weight is ignored
-//! by head scoring.
+//! An attester slashing is evidence that one validator signed two conflicting
+//! [attestations](crate::glossary#attestation). Fork choice does not punish
+//! anyone here, that is the state transition's job. It simply notes the offender
+//! in its `equivocating_indices` set so that, from then on, that validator's
+//! votes are ignored when weighing the chain.
 
 use crate::containers::AttesterSlashing;
 use crate::error::{ForkChoiceError, SignatureError};
 
 use super::store::Store;
 
-/// Validate slashing evidence and record the equivocating validators locally.
-///
-/// Spec: `on_attester_slashing`.
-pub fn on_attester_slashing(
-    store: &mut Store,
-    attester_slashing: &AttesterSlashing,
-) -> Result<(), ForkChoiceError> {
-    let a1 = &attester_slashing.attestation_1;
-    let a2 = &attester_slashing.attestation_2;
+impl Store {
+    /// Validate slashing evidence and mark the offending validators as
+    /// equivocating.
+    ///
+    /// Confirms the two attestations really do conflict and that both are properly
+    /// signed, then adds every validator that signed both to the store's
+    /// `equivocating_indices`, after which their stake stops counting toward any
+    /// node's weight. Returns [`ForkChoiceError::InvalidAttesterSlashing`] if the
+    /// evidence does not hold up.
+    pub fn on_attester_slashing(
+        &mut self,
+        attester_slashing: &AttesterSlashing,
+    ) -> Result<(), ForkChoiceError> {
+        let a1 = &attester_slashing.attestation_1;
+        let a2 = &attester_slashing.attestation_2;
 
-    if !crate::state_transition::is_slashable_attestation_data(&a1.data, &a2.data) {
-        return Err(ForkChoiceError::InvalidAttesterSlashing);
+        if !crate::state_transition::is_slashable_attestation_data(&a1.data, &a2.data) {
+            return Err(ForkChoiceError::InvalidAttesterSlashing);
+        }
+
+        let state = self
+            .block_states
+            .get(&self.justified_checkpoint.root)
+            .ok_or(ForkChoiceError::JustifiedStateMissing)?;
+        state
+            .validate_indexed_attestation(a1, SignatureError::AttesterSlashingAttestationOne)
+            .map_err(|_| ForkChoiceError::InvalidAttesterSlashing)?;
+        state
+            .validate_indexed_attestation(a2, SignatureError::AttesterSlashingAttestationTwo)
+            .map_err(|_| ForkChoiceError::InvalidAttesterSlashing)?;
+
+        let a1_set: std::collections::BTreeSet<_> = a1.attesting_indices.iter().copied().collect();
+        let a2_set: std::collections::BTreeSet<_> = a2.attesting_indices.iter().copied().collect();
+        self.equivocating_indices
+            .extend(a1_set.intersection(&a2_set).copied());
+        Ok(())
     }
-
-    let state = store
-        .block_states
-        .get(&store.justified_checkpoint.root)
-        .ok_or(ForkChoiceError::JustifiedStateMissing)?;
-    state
-        .validate_indexed_attestation(a1, SignatureError::AttesterSlashingAttestationOne)
-        .map_err(|_| ForkChoiceError::InvalidAttesterSlashing)?;
-    state
-        .validate_indexed_attestation(a2, SignatureError::AttesterSlashingAttestationTwo)
-        .map_err(|_| ForkChoiceError::InvalidAttesterSlashing)?;
-
-    let a1_set: std::collections::BTreeSet<_> = a1.attesting_indices.iter().copied().collect();
-    let a2_set: std::collections::BTreeSet<_> = a2.attesting_indices.iter().copied().collect();
-    for &validator in a1_set.intersection(&a2_set) {
-        store.equivocating_indices.insert(validator);
-    }
-    Ok(())
 }

@@ -57,7 +57,7 @@ pub struct IndexedAttestation {
 ///
 /// The state transition consumes block-body attestations through
 /// [`BeaconState::process_attestation`](crate::containers::BeaconState::process_attestation). Fork choice consumes both block and
-/// gossip attestations through [`crate::fork_choice::on_attestation`] to update
+/// gossip attestations through [`crate::fork_choice::Store::on_attestation()`] to update
 /// latest messages for LMD-GHOST.
 #[derive(Default, Debug, Clone, PartialEq, Eq, SimpleSerialize)]
 pub struct Attestation {
@@ -92,7 +92,7 @@ pub struct SingleAttestation {
 ///
 /// Block processing validates and applies this through
 /// [`BeaconState::process_attester_slashing`](crate::containers::BeaconState::process_attester_slashing). Fork choice records the
-/// equivocating validators through [`crate::fork_choice::on_attester_slashing`].
+/// equivocating validators through [`crate::fork_choice::Store::on_attester_slashing()`].
 #[derive(Default, Debug, Clone, PartialEq, Eq, SimpleSerialize)]
 pub struct AttesterSlashing {
     /// First conflicting attestation.
